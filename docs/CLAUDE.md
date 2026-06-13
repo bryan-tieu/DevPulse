@@ -99,7 +99,7 @@ docker-compose.yml
 Core principle: build a thin end-to-end slice first, then deepen each layer. **Weeks 1–6 are the non-negotiable complete project; Phase 4 (streaming) is a stretch — drop it if behind.**
 
 **Phase 0 · Week 1 — Setup & thin vertical slice**
-- [ ] Repo structure, Docker Compose skeleton, GCP account + billing alerts
+- [X] Repo structure, Docker Compose skeleton, GCP account + billing alerts
 - [ ] Terraform: GCS bucket + BigQuery dataset + service account
 - [ ] One file: GH Archive → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint (ugly but end-to-end)
 
