@@ -48,3 +48,14 @@ resource "google_storage_bucket" "bronze" {
   # teardown. In production set this to false so TF can't delete live data.
   force_destroy = true
 }
+
+# Silver layer: cleaned/typed tables loaded from Spark, queried by dbt.
+resource "google_bigquery_dataset" "silver" {
+  dataset_id  = var.dataset_id
+  location    = var.region
+  description = "DevPulse silver-layer tables (cleaned, typed events from Spark)."
+
+  # DEV ONLY: lets `terraform destroy` drop the dataset even if it has tables.
+  # In production set this to false so TF can't delete the warehouse.
+  delete_contents_on_destroy = true
+}
