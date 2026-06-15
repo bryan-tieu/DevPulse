@@ -100,7 +100,7 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 
 **Phase 0 · Week 1 — Setup & thin vertical slice**
 - [X] Repo structure, Docker Compose skeleton, GCP account + billing alerts
-- [ ] Terraform: GCS bucket + BigQuery dataset + service account
+- [X] Terraform: GCS bucket + BigQuery dataset + service account
 - [ ] One file: GH Archive → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint (ugly but end-to-end)
 
 **Phase 1 · Weeks 2–3 — Batch lakehouse core**
@@ -127,10 +127,11 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 > **Update this section at the end of each session.** It's the first thing to read at the start of the next one.
 
 - **Current phase:** Phase 0 — Week 1 (setup & thin vertical slice)
-- **Done:** Nothing yet — project just starting.
-- **Next up:** Create repo structure; set up GCP account with billing alerts; Terraform a GCS bucket + BigQuery dataset.
-- **Known issues / blockers:** None yet.
-- **Open decisions:** Confirm data domain (default: GitHub Archive).
+- **Current day:** [Day 2 — Terraform the cloud foundation](daily/day-02.md) ✅ complete
+- **Done:** Day 1 — repo skeleton, Python `.venv`, `.gitignore`, GCP account + billing alerts. Day 2 — Terraform provisions the GCS bronze bucket, BigQuery `devpulse_silver` dataset, and least-privilege pipeline service account (applied & verified). Pipeline SA: `devpulse-pipeline@devpulse-dp2622.iam.gserviceaccount.com`.
+- **Next up:** Day 3 — the thin vertical slice: download one GH Archive hour → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint.
+- **Known issues / blockers:** None.
+- **Open decisions:** None outstanding — Day 2 choices logged in [decisions.md](decisions.md) (local TF state, ADC over SA keys, APIs managed outside TF, dev-only `force_destroy`/`delete_contents_on_destroy`).
 
 ---
 
@@ -147,6 +148,12 @@ docker compose up        # (placeholder) bring up Airflow / Spark / Kafka
 # pytest                 # python unit tests
 # Lint
 # ruff check . && black --check . && sqlfluff lint dbt/
-# Terraform
-# cd terraform && terraform plan / apply / destroy
+# Terraform (cloud infra; run from repo root with -chdir, or cd terraform)
+terraform -chdir=terraform init                    # one-time / after provider changes
+terraform -chdir=terraform fmt                      # format .tf files
+terraform -chdir=terraform validate                 # static check
+terraform -chdir=terraform plan                     # preview changes (read-only)
+terraform -chdir=terraform apply                    # provision
+terraform -chdir=terraform destroy                  # tear down at session end (cost hygiene)
+# Auth: uses your ADC (gcloud auth application-default login). Values in terraform/terraform.tfvars (gitignored).
 ```
