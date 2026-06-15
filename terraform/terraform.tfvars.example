@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars and fill in your values. Do not commit terraform.tfvars.
+project_id  = "your-gcp-project-id"
+region      = "us-central1"            # regional (not multi-region) keeps GCS in the always-free tier
+bucket_name = "your-project-id-bronze" # must be globally unique across all of GCP
+dataset_id  = "devpulse_silver"        # letters/numbers/underscores only
