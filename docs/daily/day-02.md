@@ -34,7 +34,7 @@ Execute in order; one small commit per step so each diff is reviewable.
 - [X] `outputs.tf` exports bucket, dataset, and SA email.
 - [X] No secrets/state/tfvars tracked in git (`git status` clean of them).
 - [X] Phase 0 Terraform box ticked in `CLAUDE.md`; choices logged in `decisions.md`.
-- [ ] `terraform destroy` run (or a conscious decision to leave resources up).
+- [X] `terraform destroy` run (or a conscious decision to leave resources up).
 
 ## Learning goals
 1. **Terraform workflow & state** — what `init/plan/apply` each do, why state exists, and the local-vs-remote-backend tradeoff.
