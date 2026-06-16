@@ -9,3 +9,4 @@ __pycache__/
 *.tfvars
 !*.tfvars.example
 *.gz
+test.py
