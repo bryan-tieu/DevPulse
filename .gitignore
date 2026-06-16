@@ -8,3 +8,4 @@ __pycache__/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+*.gz
