@@ -91,3 +91,35 @@ by `\n` only, and any real newline inside a string is escaped, so `text.split("\
 The manual slice authenticates with my own short-lived ADC token (consistent with the Day 2 ADC
 decision). The pipeline SA exists for **non-human** callers (Airflow, Spark) arriving in Phase 1;
 using it now would mean minting a long-lived key — the exact credential we're avoiding.
+
+---
+
+## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
+
+The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
+ADC, least-privilege IAM, bucket public-access-prevention enforced. The items below are **latent** —
+patterns that become real vulnerabilities once user input or a public deployment is added. They're
+also flagged inline against the relevant phases in `CLAUDE.md`. Goal stated by me: eventually deploy.
+
+- **Parameterized queries (Phase 3).** `api/main.py` builds SQL with an f-string. Safe today (no
+  request input), but adding `/languages/{lang}` or pagination params would make it SQL-injectable.
+  Use `QueryJobConfig(query_parameters=[...])`. Identifiers (table/column names) can't be
+  parameterized — they must come from a fixed allowlist, never from the request.
+- **API auth + rate limiting (Phase 3, before any deploy).** The endpoint is unauthenticated. Fine
+  on localhost; once on Cloud Run an open endpoint over BigQuery is both data exposure and a
+  **billing-DoS** (each request runs a paid query job). Add auth (API key / Cloud Run IAM) + limits.
+- **`maximum_bytes_billed` cap (Phase 3).** No per-query cost ceiling today. Set it on every query
+  job as defense-in-depth for cost and abuse; pairs with the project byte-scanned quota.
+- **CORS (Phase 3).** When the dashboard calls the API, configure CORS deliberately — never
+  `allow_origins=["*"]` together with credentials.
+- **Dependency pinning (Phase 3 CI).** `requirements.txt` is unpinned (Terraform is pinned + locked
+  via `.terraform.lock.hcl`). Pin Python deps via a lockfile (pip-tools/uv) and enable Dependabot to
+  close the supply-chain gap.
+- **Pipeline SA auth (Phase 1).** When Airflow/Spark first use the pipeline SA, authenticate via
+  impersonation / workload identity — do **not** mint a long-lived SA key (consistent with the Day 2
+  ADC decision). Keep Airflow connections/secrets in the secrets backend, never in DAG code.
+- **PII in bronze (Phase 2).** GH Archive commit payloads include **author email addresses**. Bronze
+  is locked down, but don't propagate actor emails into gold dims/marts unless intended — hash or
+  drop them in staging.
+- **GitHub token for the live Events API (Phase 4).** The streaming producer needs a GitHub token;
+  store it in the secrets backend, never in producer code or git.
