@@ -106,19 +106,23 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 **Phase 1 · Weeks 2–3 — Batch lakehouse core**
 - [ ] Airflow in Docker; idempotent ingestion DAG → GCS bronze (partitioned); backfill 1 week; sensors + retries
 - [ ] PySpark silver job: explode/dedupe/type the nested JSON → partitioned Parquet → BigQuery; wired into Airflow
+> 🔐 _Security (carries from Phase 0): this is where the pipeline SA first authenticates. Do **not** mint an SA key — use SA impersonation / workload identity (per the Day 2 ADC decision). Keep Airflow connections & secrets in the secrets backend, never in DAG code or git._
 
 **Phase 2 · Weeks 4–5 — Warehouse modeling & quality**
 - [ ] dbt: staging → star schema (fact_events + dim_repo/actor/date/event_type) → marts; incremental fact; tests + docs
 - [ ] Great Expectations bronze→silver gates; dbt tests as a DAG gate; failure alerting; run-metadata logging
+> 🔐 _Security (carries from Phase 0): GH Archive payloads contain **author email addresses** (PII). Bronze is locked down, but don't propagate actor emails into the gold dims/marts unless intended — hash or drop them in staging._
 
 **Phase 3 · Week 6 — Serving & CI/CD 🏁 (guaranteed finish line)**
 - [ ] FastAPI over gold marts (pagination, caching, auto-docs)
 - [ ] Dashboard (Streamlit or Looker Studio)
 - [ ] GitHub Actions CI (lint, pytest, dbt build, GE checks); build/push images
+> 🔐 _Security (carries from Phase 0) — the slice's API **must be hardened before any public deploy**: (1) **parameterized queries** — never f-string request input into SQL (table/column names from a fixed allowlist only); (2) **auth + rate limiting** — an open endpoint over BigQuery is data exposure **and** billing-DoS (every request runs a paid query job); (3) set **`maximum_bytes_billed`** on every query job; (4) **CORS** — no `allow_origins=["*"]` with credentials; (5) **pin dependencies** + enable Dependabot in CI. Detail in [decisions.md](decisions.md)._
 
 **Phase 4 · Weeks 7–8 — Streaming (stretch)**
 - [ ] Kafka in Docker; producer polls Events API → topic; Spark Structured Streaming → bronze/real-time table
 - [ ] Real-time mart + endpoint; architecture diagram, README, demo video, "what I'd change at scale" writeup
+> 🔐 _Security (carries from Phase 0): the real-time endpoint inherits **all** the Phase 3 API hardening (parameterized queries, auth, rate limiting, `maximum_bytes_billed`). The live Events API also needs a **GitHub token** — store it in the secrets backend, never in the producer code or git._
 
 ---
 
