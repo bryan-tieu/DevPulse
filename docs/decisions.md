@@ -46,3 +46,48 @@ Used `google_*_iam_member` (additive, smallest blast radius) over `_iam_binding`
 `force_destroy = true` (bucket) and `delete_contents_on_destroy = true` (dataset) let
 `terraform destroy` remove non-empty resources for clean daily teardown.
 **Production:** both `false`, so Terraform can never delete live data/tables; you'd empty them deliberately.
+
+---
+
+## Day 3 — Thin vertical slice (2026-06-15)
+
+### Hive-style bronze partitioning (`date=.../hour=.../`)
+Bronze objects are keyed `date=YYYY-MM-DD/hour=HH/<source-filename>`. The `key=value` directory
+convention is what Spark, BigQuery external tables, and dbt recognize for **partition pruning** —
+later layers can read just one date instead of scanning the whole lake. The directory hour is
+zero-padded for correct lexical sorting; the filename keeps the source's exact name so bronze stays
+byte-for-byte traceable to its origin ("exactly as ingested").
+
+### Idempotency: `blob.exists()` skip + `WRITE_TRUNCATE`
+Two mechanisms, one rule. Ingestion checks `blob.exists()` and skips — bronze is immutable, so a
+re-run is a no-op (and cheaper: no re-download). The BQ load uses `WRITE_TRUNCATE`, so a re-run
+**replaces** the table instead of appending. Verified by running the pipe twice and confirming
+`SUM(event_count)` was identical, not doubled. `WRITE_APPEND` would have doubled it.
+**Limitation (deferred):** `WRITE_TRUNCATE` wipes the *whole* table, so loading a second hour would
+erase the first. The fix when Airflow loads many hours is a **time-partitioned table** with the load
+scoped to one partition (`table$YYYYMMDD`).
+
+### Trivial in-memory transform as a placeholder for Spark
+The silver transform is a Python `collections.Counter` over events in memory — deliberately dumb.
+Thin-slice-first: connect the whole pipe before deepening any layer. It does **not** scale (one
+small file fits in RAM; a day of the firehose does not) — which is exactly why the real silver layer
+is distributed PySpark in Phase 1. Being able to articulate *why* you'd move from this to Spark is
+the point.
+
+### `load_table_from_json` (load job) over streaming inserts
+Loaded the table with a BigQuery **load job**, which is **free**, rather than streaming inserts,
+which cost per row. Cost hygiene baked into the method choice. Also used an **explicit schema with
+`mode="REQUIRED"`** (no autodetect) so bad/null data fails the load loudly instead of silently
+redefining the table's contract.
+
+### NDJSON parsing: `split("\n")`, never `str.splitlines()`
+GH Archive is newline-delimited JSON. `str.splitlines()` also splits on Unicode line boundaries
+(`U+0085`, `U+2028`, `U+2029`) that appear **raw inside event text** (commit messages, issue bodies),
+which chops a JSON object mid-string → `JSONDecodeError: Unterminated string`. Records are separated
+by `\n` only, and any real newline inside a string is escaped, so `text.split("\n")` is correct.
+(The Phase 1 Spark JSON reader sidesteps this entirely — another point for moving the transform to Spark.)
+
+### Slice runs as me via ADC, not the pipeline SA
+The manual slice authenticates with my own short-lived ADC token (consistent with the Day 2 ADC
+decision). The pipeline SA exists for **non-human** callers (Airflow, Spark) arriving in Phase 1;
+using it now would mean minting a long-lived key — the exact credential we're avoiding.

@@ -101,7 +101,7 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 **Phase 0 · Week 1 — Setup & thin vertical slice**
 - [X] Repo structure, Docker Compose skeleton, GCP account + billing alerts
 - [X] Terraform: GCS bucket + BigQuery dataset + service account
-- [ ] One file: GH Archive → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint (ugly but end-to-end)
+- [X] One file: GH Archive → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint (ugly but end-to-end)
 
 **Phase 1 · Weeks 2–3 — Batch lakehouse core**
 - [ ] Airflow in Docker; idempotent ingestion DAG → GCS bronze (partitioned); backfill 1 week; sensors + retries
@@ -126,12 +126,12 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 
 > **Update this section at the end of each session.** It's the first thing to read at the start of the next one.
 
-- **Current phase:** Phase 0 — Week 1 (setup & thin vertical slice)
-- **Current day:** [Day 2 — Terraform the cloud foundation](daily/day-02.md) ✅ complete
-- **Done:** Day 1 — repo skeleton, Python `.venv`, `.gitignore`, GCP account + billing alerts. Day 2 — Terraform provisions the GCS bronze bucket, BigQuery `devpulse_silver` dataset, and least-privilege pipeline service account (applied & verified). Pipeline SA: `devpulse-pipeline@devpulse-dp2622.iam.gserviceaccount.com`.
-- **Next up:** Day 3 — the thin vertical slice: download one GH Archive hour → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint.
-- **Known issues / blockers:** None.
-- **Open decisions:** None outstanding — Day 2 choices logged in [decisions.md](decisions.md) (local TF state, ADC over SA keys, APIs managed outside TF, dev-only `force_destroy`/`delete_contents_on_destroy`).
+- **Current phase:** Phase 0 complete (thin vertical slice done) → starting Phase 1 (batch lakehouse core).
+- **Current day:** [Day 3 — the thin vertical slice](daily/day-03.md) ✅ complete
+- **Done:** Day 1 — repo skeleton, Python `.venv`, `.gitignore`, GCP account + billing alerts. Day 2 — Terraform provisions the GCS bronze bucket, BigQuery `devpulse_silver` dataset, and least-privilege pipeline service account (applied & verified). Pipeline SA: `devpulse-pipeline@devpulse-dp2622.iam.gserviceaccount.com`. Day 3 — end-to-end thin slice: `ingestion/` downloads one GH Archive hour → GCS bronze (Hive-partitioned, idempotent via `blob.exists()`), `transform/` counts events by type → BigQuery `hourly_event_counts` (WRITE_TRUNCATE), `api/` serves `/event-counts` over the table. Run as me via ADC; verified end-to-end then `terraform destroy`ed.
+- **Next up:** Day 4 — Phase 1, Week 2: stand up Airflow in Docker and convert the manual `run.py` slice into an idempotent ingestion DAG (partitioned bronze, retries, sensor, one-week backfill).
+- **Known issues / blockers:** None. (Slice carries known thin-slice limits — whole-table WRITE_TRUNCATE, in-memory transform — see [decisions.md](decisions.md).)
+- **Open decisions:** None outstanding — Day 2–3 choices logged in [decisions.md](decisions.md).
 
 ---
 
