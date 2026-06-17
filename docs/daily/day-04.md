@@ -33,14 +33,14 @@ Execute in order; one small commit per step. Steps 1 and 6 are setup/verify, not
 - 💸 **Cost hygiene.** Airflow runs **local in Docker** (free — no managed Airflow). `docker compose down` + `terraform destroy` at session end. Day 5 starts with `apply` + `compose up` again.
 
 ## Done criteria
-- [ ] Airflow stack runs in Docker; UI reachable at `http://localhost:8080`.
-- [ ] The DAG appears and **parses with no import errors** (project importable, GCP libs present in the image).
-- [ ] GCP credentials reach the container — tasks authenticate with no ADC/permission errors.
-- [ ] One DAG run: `ingest` then `transform` both succeed; bronze object + `hourly_event_counts` rows match the Day 3 manual result.
-- [ ] Re-running the same interval is idempotent (bronze skipped, counts unchanged).
-- [ ] `retries`/`retry_delay` set and `ingest >> transform` dependency correct.
-- [ ] No secrets/keys/`logs/` tracked in git.
-- [ ] `docker compose down` + `terraform destroy` run; Phase 1 Airflow box ticked in `CLAUDE.md`; choices logged in `decisions.md`.
+- [x] Airflow stack runs in Docker; UI reachable at `http://localhost:8080`.
+- [x] The DAG appears and **parses with no import errors** (project importable, GCP libs present in the image).
+- [x] GCP credentials reach the container — tasks authenticate with no ADC/permission errors.
+- [x] One DAG run: `ingest` then `transform` both succeed; bronze object + `hourly_event_counts` rows match the Day 3 manual result.
+- [x] Re-running the same interval is idempotent (bronze skipped, counts unchanged).
+- [x] `retries`/`retry_delay` set and `ingest >> transform` dependency correct.
+- [x] No secrets/keys/`logs/` tracked in git.
+- [x] `docker compose down` + `terraform destroy` run; Phase 1 Airflow box ticked in `CLAUDE.md`; choices logged in `decisions.md`.
 
 ## Learning goals
 1. **Airflow's core model** — DAG / task / operator / scheduler / executor, and the **data-interval (logical date)** concept: a run targets a *time window*, not "now".

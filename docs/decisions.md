@@ -94,6 +94,71 @@ using it now would mean minting a long-lived key — the exact credential we're 
 
 ---
 
+## Day 4 — Airflow orchestration in Docker (2026-06-16)
+
+### LocalExecutor, not Celery/Kubernetes
+Solo dev on one machine, so the DAG runs with **LocalExecutor** — tasks execute as
+subprocesses of the scheduler. Celery/K8s executors exist to fan tasks across many worker
+nodes via a broker (Redis); with one machine that decoupling is pure overhead, so the
+official compose's `redis`/`worker`/`flower` services were removed.
+**At scale:** Celery or Kubernetes executor for horizontal task concurrency.
+
+### Tasks are a pure function of the data interval (logical date)
+Each task derives `date`/`hour` from `data_interval_start`, never `datetime.now()`. A run
+owns a *time window*, not "now" — which is what makes it reproducible, retryable, and (later)
+backfillable. The DAG is a thin wrapper mapping interval → the **unchanged** Day 3
+`ingest_hour` / `load_event_counts` (reuse over rewrite), passing the bronze key `ingest → transform`
+via **XCom**.
+
+### Manual-trigger interval inference = "the window ENDING at the logical date"
+Gotcha worth remembering: for the `@hourly` cron timetable,
+`infer_manual_data_interval(run_after=L)` returns the last complete window *ending at* `L`.
+So to process the **15:00** hour you trigger with logical date **16:00**, not 15:00.
+Scheduled runs don't have this (logical_date == data_interval_start); only manual triggers
+infer backward. (Verified empirically against the timetable before triggering.)
+
+### catchup=False + whole-table WRITE_TRUNCATE ⇒ one hour only (today)
+With `catchup=True` the scheduler would run every hourly interval from `start_date` (Jan 2024)
+to now — thousands of runs, each `WRITE_TRUNCATE` clobbering the last. `catchup=False` scopes
+today to a single hour. The real backfill waits for Day 5's **time-partitioned BigQuery table**
+with a partition-scoped replace (`table$YYYYMMDD`).
+
+### retries=2 is safe *because* the tasks are idempotent
+The chain: interval-pure → idempotent (`blob.exists()` bronze skip + `WRITE_TRUNCATE`) →
+retries/backfill safe. A retried `ingest` re-skips the existing object; a retried `transform`
+re-truncates to the same rows. Verified: clearing + re-running the same interval left
+`SUM(event_count)` unchanged (not doubled).
+
+### Credentials: ADC bind-mounted read-only, never baked into the image
+The host ADC file is bind-mounted `:ro` into the containers and discovered via
+`GOOGLE_APPLICATION_CREDENTIALS`; nothing is `COPY`d into the image (a baked key persists in
+image layers and leaks on pull). Still **personal ADC**, not the pipeline SA — consistent with
+the Day 3 "runs as me" decision. **Deferred:** switch Airflow to the pipeline SA via
+impersonation / workload identity (no minted key) — still on the security backlog below.
+
+### Dependencies: extend the image (committed Dockerfile) over `_PIP_ADDITIONAL_REQUIREMENTS`
+A pinned `FROM apache/airflow:2.10.5` + `pip install google-cloud-storage / -bigquery /
+python-dotenv` bakes deps once and keeps the list **version-controlled**. `requests` is left to
+Airflow's own pin (already present — reinstalling risks a version conflict).
+`_PIP_ADDITIONAL_REQUIREMENTS` re-installs on every container boot from a gitignored file —
+fine for a quick spike, not reproducible.
+
+### Project reaches the container via mount + PYTHONPATH + env_file
+`ingestion/`, `transform/`, `config.py` are mounted read-only to `/opt/devpulse` with
+`PYTHONPATH=/opt/devpulse` (imports are top-level). `GCP_PROJECT`/`BRONZE_BUCKET`/`BQ_DATASET`
+reach the container via compose `env_file: ../.env` — reuse the existing gitignored config, no
+duplication, no values committed.
+
+### Debug note: a missing bind source becomes a silent empty directory
+A `gcloud`→`gclouid` typo in the ADC mount source made Docker create an empty *directory* at the
+target (Docker doesn't error on a missing bind source — it invents one), surfacing as
+`IsADirectoryError`. `docker compose config | grep source` shows the resolved path and finds
+such typos fast. Also: argument bugs inside a task callable (e.g. a missing `bronze_key` arg)
+pass `dags list-import-errors` because parsing builds the DAG without *calling* the task —
+**parse-clean ≠ run-clean.**
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless

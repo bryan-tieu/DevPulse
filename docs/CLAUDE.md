@@ -104,7 +104,7 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 - [X] One file: GH Archive → GCS bronze → trivial transform → one BQ table → one FastAPI endpoint (ugly but end-to-end)
 
 **Phase 1 · Weeks 2–3 — Batch lakehouse core**
-- [ ] Airflow in Docker; idempotent ingestion DAG → GCS bronze (partitioned); backfill 1 week; sensors + retries
+- [ ] Airflow in Docker; idempotent ingestion DAG → GCS bronze (partitioned); backfill 1 week; sensors + retries — _Day 4 ✅ Airflow (LocalExecutor) in Docker + idempotent `ingest >> transform` DAG with retries; partition-scoped backfill + sensor = Day 5_
 - [ ] PySpark silver job: explode/dedupe/type the nested JSON → partitioned Parquet → BigQuery; wired into Airflow
 > 🔐 _Security (carries from Phase 0): this is where the pipeline SA first authenticates. Do **not** mint an SA key — use SA impersonation / workload identity (per the Day 2 ADC decision). Keep Airflow connections & secrets in the secrets backend, never in DAG code or git._
 
@@ -131,9 +131,9 @@ Core principle: build a thin end-to-end slice first, then deepen each layer. **W
 > **Update this section at the end of each session.** It's the first thing to read at the start of the next one.
 
 - **Current phase:** Phase 0 complete (thin vertical slice done) → starting Phase 1 (batch lakehouse core).
-- **Current day:** [Day 3 — the thin vertical slice](daily/day-03.md) ✅ complete
-- **Done:** Day 1 — repo skeleton, Python `.venv`, `.gitignore`, GCP account + billing alerts. Day 2 — Terraform provisions the GCS bronze bucket, BigQuery `devpulse_silver` dataset, and least-privilege pipeline service account (applied & verified). Pipeline SA: `devpulse-pipeline@devpulse-dp2622.iam.gserviceaccount.com`. Day 3 — end-to-end thin slice: `ingestion/` downloads one GH Archive hour → GCS bronze (Hive-partitioned, idempotent via `blob.exists()`), `transform/` counts events by type → BigQuery `hourly_event_counts` (WRITE_TRUNCATE), `api/` serves `/event-counts` over the table. Run as me via ADC; verified end-to-end then `terraform destroy`ed.
-- **Next up:** Day 4 — Phase 1, Week 2: stand up Airflow in Docker and convert the manual `run.py` slice into an idempotent ingestion DAG (partitioned bronze, retries, sensor, one-week backfill).
+- **Current day:** [Day 4 — orchestrate the slice with Airflow](daily/day-04.md) ✅ complete
+- **Done:** Day 1 — repo skeleton, Python `.venv`, `.gitignore`, GCP account + billing alerts. Day 2 — Terraform provisions the GCS bronze bucket, BigQuery `devpulse_silver` dataset, and least-privilege pipeline service account (applied & verified). Pipeline SA: `devpulse-pipeline@devpulse-dp2622.iam.gserviceaccount.com`. Day 3 — end-to-end thin slice: `ingestion/` downloads one GH Archive hour → GCS bronze (Hive-partitioned, idempotent via `blob.exists()`), `transform/` counts events by type → BigQuery `hourly_event_counts` (WRITE_TRUNCATE), `api/` serves `/event-counts` over the table. Run as me via ADC; verified end-to-end then `terraform destroy`ed. Day 4 — Airflow in Docker (LocalExecutor): trimmed the official compose stack (no Celery/redis/worker), extended the image with the GCP libs, mounted code + ADC read-only into the containers, and wrapped the unchanged `ingest_hour`/`load_event_counts` in an `@hourly` `ingest >> transform` DAG that derives `date`/`hour` from the run's data interval (`catchup=False`, `retries=2`). Triggered the 2024-01-01 15:00 hour: both tasks green, bronze object + `hourly_event_counts` matched Day 3, and a clear/re-run proved idempotency (`SUM(event_count)` unchanged).
+- **Next up:** Day 5 — Phase 1, Week 2: time-partitioned BigQuery table with partition-scoped replace (`table$YYYYMMDD`) to lift the whole-table `WRITE_TRUNCATE` limit, then unlock the one-week backfill (`catchup`) and add a sensor.
 - **Known issues / blockers:** None. (Slice carries known thin-slice limits — whole-table WRITE_TRUNCATE, in-memory transform — see [decisions.md](decisions.md).)
 - **Open decisions:** None outstanding — Day 2–3 choices logged in [decisions.md](decisions.md).
 
