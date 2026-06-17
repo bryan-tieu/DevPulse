@@ -55,6 +55,8 @@ x-airflow-common:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     PYTHONPATH: /opt/devpulse
+    GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/gcp/adc.json
+    GOOGLE_CLOUD_PROJECT: devpulse-dp2622
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     # AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
     # AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
@@ -82,6 +84,10 @@ x-airflow-common:
     - ../ingestion:/opt/devpulse/ingestion:ro
     - ../transform:/opt/devpulse/transform:ro
     - ../config.py:/opt/devpulse/config.py:ro
+    - type: bind
+      source: ${APPDATA}/gcloud/application_default_credentials.json
+      target: /opt/airflow/gcp/adc.json
+      read_only: true
   env_file:
     - ../.env
     
