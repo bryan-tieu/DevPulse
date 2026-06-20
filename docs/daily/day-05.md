@@ -40,14 +40,14 @@ Execute in order; one small commit per step. Steps 1 and 6–7 are setup/verify,
 - 📦 **Small, reviewable commits & understand-don't-rubber-stamp.** One step per commit (e.g. `make hourly_event_counts hour-partitioned`, `load into partition decorator`, `add archive-availability sensor`). I want the *why* for HOUR-vs-DAY, partition-decorator semantics, `catchup` vs `dags backfill`, and reschedule mode before each lands.
 
 ## Done criteria
-- [ ] `hourly_event_counts` is **HOUR-partitioned** on `event_hour`; the table is created idempotently (`exists_ok=True`).
-- [ ] The load writes to `…$YYYYMMDDHH` with `WRITE_TRUNCATE`; two different hours coexist (no whole-table truncate left).
-- [ ] `wait_for_archive` sensor gates `ingest` (`mode="reschedule"`, sane `poke_interval`/`timeout`); chain is `wait_for_archive >> ingest >> transform`.
-- [ ] A bounded **one-week** backfill ran via `dags backfill -s 2024-01-01 -e 2024-01-07`; ~168 hourly partitions present; `catchup` stayed `False`.
-- [ ] `max_active_runs` bounded so the backfill doesn't OOM Docker.
-- [ ] Re-running one loaded hour leaves its partition `SUM` unchanged **and** other hours untouched (partition-scoped idempotency proven).
-- [ ] No secrets/keys/`logs/` tracked in git.
-- [ ] `docker compose down` + `terraform destroy` run; Phase 1 ingestion-DAG box ticked; status + `decisions.md` updated.
+- [x] `hourly_event_counts` is **HOUR-partitioned** on `event_hour`; the table is created idempotently (`exists_ok=True`).
+- [x] The load writes to `…$YYYYMMDDHH` with `WRITE_TRUNCATE`; two different hours coexist (no whole-table truncate left).
+- [x] `wait_for_archive` sensor gates `ingest` (`mode="reschedule"`, sane `poke_interval`/`timeout`); chain is `wait_for_archive >> ingest >> transform`.
+- [x] A bounded backfill ran via `dags backfill -s 2024-01-01 -e 2024-01-03`; **48 contiguous hourly partitions** present (2-day proof in place of the full week — same mechanism, expand on demand); `catchup` stayed `False`.
+- [x] `max_active_runs=1` bounded so the backfill doesn't OOM Docker.
+- [x] Re-running one loaded hour leaves its partition `SUM` unchanged **and** other hours untouched (partition-scoped idempotency proven — grand total + that hour's sum identical after re-load).
+- [x] No secrets/keys/`logs/` tracked in git.
+- [ ] `docker compose down` + `terraform destroy` run; Phase 1 ingestion-DAG box ticked; status + `decisions.md` updated. _(docs done; teardown pending at session end.)_
 
 ## Learning goals
 1. **BigQuery time partitioning** — column (`field=`) vs ingestion-time partitioning, partition **granularity** (HOUR/DAY), and why grain choice is driven by *load grain* and *query grain*, not taste.

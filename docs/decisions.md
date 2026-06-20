@@ -159,6 +159,72 @@ pass `dags list-import-errors` because parsing builds the DAG without *calling* 
 
 ---
 
+## Day 5 — Partition the silver table, sensor, bounded backfill (2026-06-19)
+
+### HOUR partitioning + partition decorator (`table$YYYYMMDDHH`), not DAY
+`hourly_event_counts` is now **time-partitioned by HOUR on `event_hour`**, and the load targets the
+partition decorator `table$YYYYMMDDHH` with `WRITE_TRUNCATE` — so a re-run/new load replaces **only
+that hour's partition**, never the whole table. This lifts the Day 3/4 whole-table-truncate limit
+that pinned the DAG to one hour. **Grain must match the load grain:** the DAG loads one hour per run,
+and a scoped truncate replaces a *whole partition* — so a **DAY** partition (`$YYYYMMDD`, the earlier
+shorthand) would let hour 16 wipe hour 15. Daily rollups belong downstream in gold/dbt, not this
+hourly silver table. *(Rejected alt: keep DAY partition + a `MERGE`/delete-by-hour — more complex for
+no benefit here.)*
+
+### Table created idempotently up front — you can't `ALTER` partitioning in
+A partition-decorator load requires the table to **already exist and already be partitioned** (you
+can't declare `time_partitioning` on a decorator load). So `_ensure_table` runs
+`create_table(table, exists_ok=True)` before every load — idempotent no-op once it exists. Note the
+real migration trap: **partitioning is fixed at creation**; changing it is a drop-and-recreate, never
+an in-place `ALTER`. Safe here only because the daily `terraform destroy` leaves the dataset empty,
+so the first run creates it partitioned from scratch.
+
+### Availability sensor: `PythonSensor`, reschedule mode — and "sensors fail silently into waiting"
+`wait_for_archive >> ingest >> transform`. A `PythonSensor` (HEAD on the GH Archive URL, 200 ⇒ ready)
+over `HttpSensor` — self-contained, reuses `GH_ARCHIVE_URL`/`requests`, no Airflow HTTP connection to
+manage. **`mode="reschedule"`** (not `poke`) releases the worker slot between checks — critical under
+LocalExecutor where a poking sensor starves other tasks; rule of thumb: `poke_interval > ~60s ⇒
+reschedule`. **Hard lesson:** a `%M` (minutes) vs `%m` (month) typo built `2024-00-01-…` → 404 → the
+sensor returned `False` and rescheduled *forever*. A 404 is indistinguishable from "not published
+yet," so **a bug in a sensor's check looks identical to legitimately waiting** — sensors fail quietly
+into waiting, not loudly into red. Debug the actual artifact, not your mental model of it.
+
+### Backfill: `catchup=False` + explicit `dags backfill -s/-e`, never `catchup=True`
+The DAG's `start_date` is Jan 2024; `catchup=True` would queue ~21k hourly runs to "now". Keep
+`catchup=False` and fill a **deliberate, bounded window** with the CLI:
+`airflow dags backfill -s 2024-01-01 -e 2024-01-03` (48 contiguous hours, proven; `-e` is inclusive
+of the 00:00 boundary, hence a 49th run). `catchup` = "run everything I missed"; explicit backfill =
+"run *this* window on purpose."
+
+### `max_active_runs=1` — the marker for where the in-memory transform caps out
+A backfill wants to fan out all runs at once, but each `transform` loads a whole hour into RAM (the
+`Counter`). `max_active_runs=1` serialises them so Docker doesn't OOM. This lever exists **only**
+because the transform is single-machine — Day 6's Spark removes the need for it. (Empirically each
+backfill run was ~1-2 min, dominated by the GH Archive download, not the load.)
+
+### Operational gotchas banked (Airflow behavior in this version)
+- **A paused DAG does NOT run manual triggers** — the run sits `queued` until unpaused (corrected a
+  wrong assumption mid-session). Pause stops *all* task scheduling, not just scheduled runs.
+- **`airflow tasks test` does not record state in the metadata DB** — it's a deliberately
+  side-effect-free dry run (no DagRun advance, no XCom persisted). Great for proving a single task's
+  logic; the UI won't show it as green.
+- **Live scheduled runs compete with a backfill for the single `max_active_runs` slot.** A current
+  hour the scheduler fired (DAG was unpaused) held the slot for ~12 min — the sensor correctly
+  *waited* on the not-yet-published file — and blocked the backfill. **Keep the DAG paused during a
+  backfill** (`dags backfill` runs regardless of pause); re-pause if it drifts unpaused.
+
+### Cost guardrail finding: BigQuery daily byte quota isn't adjustable here
+Tried to set a project-level BigQuery "Query usage per day" quota as a hard cost cap — **not editable
+on this trial account** (common: trial/free accounts can't customise it, or it needs the Quota
+Administrator role). The real per-query cap is **`maximum_bytes_billed`** on every `QueryJobConfig`
+(fails an over-budget query before it scans) — already on the Phase 3 backlog, pulled into focus
+here. Not needed for the backfill itself (load jobs are free; only the API's queries scan bytes).
+Also: the **billing budget + alert and the byte quota live in the console, not Terraform**, so they're
+invisible to the repo and won't survive an account rebuild — codifying them
+(`google_billing_budget`, quota override) is a future hardening step.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
