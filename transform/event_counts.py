@@ -5,6 +5,13 @@ from google.cloud import bigquery, storage
 from config import BQ_DATASET, BRONZE_BUCKET, GCP_PROJECT
 
 TABLE_NAME = "hourly_event_counts"
+TABLE_ID = f"{GCP_PROJECT}.{BQ_DATASET}.{TABLE_NAME}"
+
+SCHEMA = [
+    bigquery.SchemaField("event_hour", "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("event_type", "STRING", mode="REQUIRED"),
+    bigquery.SchemaField("event_count", "INTEGER", mode="REQUIRED"),
+]
 
 def _read_events(bronze_key: str) -> list[dict]:
 
@@ -22,6 +29,17 @@ def _read_events(bronze_key: str) -> list[dict]:
     # raw inside event text, which would chop a JSON object in half.
     return [json.loads(line) for line in text.split("\n") if line]
 
+def _ensure_table(client: bigquery.Client) -> None:
+    
+    table = bigquery.Table(TABLE_ID, schema=SCHEMA)
+    
+    table.time_partitioning = bigquery.TimePartitioning(
+        type_=bigquery.TimePartitioningType.HOUR,
+        field="event_hour",
+    )
+    
+    client.create_table(table, exists_ok=True)
+
 def load_event_counts(date: str, hour: int, bronze_key: str) -> str:
     
     events = _read_events(bronze_key)
@@ -34,23 +52,23 @@ def load_event_counts(date: str, hour: int, bronze_key: str) -> str:
         for etype, n in counts.items()
     ]
     
-    table_id = f"{GCP_PROJECT}.{BQ_DATASET}.{TABLE_NAME}"
     client = bigquery.Client(project=GCP_PROJECT)
+    _ensure_table(client)
+    
+    partition = date.replace("-", "") + f"{hour:02d}"
+    load_target = f"{TABLE_ID}${partition}"
+    
     job_config = bigquery.LoadJobConfig(
-        schema=[
-            bigquery.SchemaField("event_hour", "TIMESTAMP", mode="REQUIRED"),
-            bigquery.SchemaField("event_type", "STRING", mode="REQUIRED"),
-            bigquery.SchemaField("event_count", "INTEGER", mode="REQUIRED"),
-        ],
+        schema=SCHEMA,
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
     )
     
-    load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
+    load_job = client.load_table_from_json(rows, load_target, job_config=job_config)
     load_job.result()
     
-    print(f"Loaded {len(rows)} rows -> {table_id}")
+    print(f"Loaded {len(rows)} rows -> {load_target}")
     
-    return table_id
+    return TABLE_ID
 
 if __name__ == "__main__":
     from ingestion.ingest import bronze_key
