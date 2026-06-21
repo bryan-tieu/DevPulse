@@ -225,6 +225,69 @@ invisible to the repo and won't survive an account rebuild — codifying them
 
 ---
 
+## Day 6 — The PySpark silver job (2026-06-20)
+
+### Scope: build the Spark job *beside* the working `Counter` DAG, swap on Day 7
+Day 6 produces silver **Parquet in GCS**, run standalone (`spark-submit`); the BQ load + Airflow
+wiring (and retiring the `Counter`/`max_active_runs=1`) are Day 7. Thin-slice rule: don't break the
+green DAG mid-Spark-setup — both pipelines coexist until the new one is proven, then swap.
+
+### Single-node `local[*]` Spark in Docker — and what changes at scale
+Spark runs in one container as `local[*]` (driver *is* the executor). Intentional — **the code is
+identical** to a cluster; only the master URL + auth source change. At scale: Dataproc/EMR with the
+connector pre-installed, executors sized (not the driver), distributed writes fanning uploads across
+many JVMs. Articulating that is the point, not provisioning a real cluster.
+
+### Reaching GCS from Spark: the connector jar + the perms gotcha
+`gs://` is unknown to Hadoop until the **GCS connector jar** is on the classpath. Baked the hadoop3
+shaded jar into the image (`/opt/spark/jars/`) rather than `--packages` (reproducible, no per-run
+download, no transitive-dep conflicts). **Hard-won:** `ADD <url>` lands the file as `0600 root`; the
+image runs as non-root `spark`, which then can't read it → the *generic* `No FileSystem for scheme
+"gs"` (not a perms error). Fix: `chmod 644`. Auth reuses **ADC** (`fs.gs.auth.type=APPLICATION_DEFAULT`),
+bind-mounted `:ro` — same keyless pattern as Airflow, still personal ADC (not the pipeline SA).
+
+### Explicit schema, drop `payload`
+`StructType`, never `inferSchema` — a contract that fails loudly on drift, free column pruning, and
+one read instead of two. **Dropped `payload`** from silver: it's a different shape per event type
+(no clean single type) *and* it's where the author-email **PII** lives. Per-event-type payload
+explosion is the iterative follow-up (Phase 2 staging); omitting it keeps silver narrow and PII-free.
+
+### Pure transform / I/O split → dedupe is a real correctness upgrade
+`transform_events(df) -> df` is pure (no read/write); `run()` holds the I/O. That split is what makes
+the **first unit test** possible (tiny in-memory DataFrame, no GCS/Java cluster needed beyond a local
+session). The transform **dedupes on `event_id`** (`dropDuplicates`) — the `Counter` never did, so
+this is genuine correctness, not just a port. Dedupe is a **shuffle** (cheap on one hour; a cost to
+note at scale). Reconciled: raw 180,387 → **180,386** silver (1 duplicate event removed).
+
+### Dynamic partition overwrite = the lake analog of Day 5's partition decorator
+`partitionBy(event_date, event_hour)` + `mode("overwrite")` **with
+`spark.sql.sources.partitionOverwriteMode=dynamic`** replaces only the partitions in the written data.
+Default `static` overwrite would **delete the entire `events/` root** every run — the exact whole-table
+trap from Day 5, one layer up. Same idempotency rule (partition grain = write grain), enforced in GCS
+instead of BigQuery. Proven: re-running an hour left 12 files, **0** orphaned staging.
+
+### The OOM: `driver.memory=4g` must live in conf/CLI, not in-code
+In `local[*]` the driver JVM is everything, default heap ~1g. `local[*]` ran ~12 concurrent write
+tasks, each buffering a multi-MB resumable GCS upload → `OutOfMemoryError` in the connector's uploader
+(read + shuffle were fine; only the **parallel buffered upload** blew up). Fix: `spark.driver.memory
+4g`, baked into `spark-defaults.conf`. **Key:** driver memory *cannot* be set via the in-code
+`SparkSession.config()` in local mode — the JVM is already launched by the time Python runs; it must
+be a `spark-submit` flag or `spark-defaults.conf`.
+
+### Object-store cleanup + commit markers
+Failed **dynamic-overwrite** commits leave orphaned `.spark-staging-*` dirs on GCS (no rename-based
+cleanup like HDFS) — deleted them manually; worth automating later. Also: dynamic overwrite **doesn't
+promote a `_SUCCESS` marker** to the table root (it commits via staging) — `exitCode 0` + "Write Job
+committed" is the authoritative signal, and our Day 7 BQ load won't depend on `_SUCCESS`.
+
+### Testing inside the Spark image (no host Java/PySpark)
+PySpark tests need Java + the bundled PySpark, which only exist in the container (host is Windows).
+Baked `pytest` into the (dev/test) Spark image and mounted `tests/` in; the runner needs
+`PYTHONPATH=/opt/spark/python:<py4j zip>` because bare `python3` (unlike `spark-submit`) doesn't add
+PySpark to the path. CI provides its own runner in Phase 3.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
