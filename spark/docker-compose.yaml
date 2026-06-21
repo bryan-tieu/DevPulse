@@ -1,0 +1,23 @@
+services:
+  spark:
+    build: .
+    image: devpulse-spark
+    environment:
+      # ADC resolution chain reads this env var → the mounted file
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/spark/gcp/adc.json
+      GOOGLE_CLOUD_PROJECT: devpulse-dp2622
+
+    env_file:
+      - ../.env                                   # GCP_PROJECT/BRONZE_BUCKET/SILVER_BUCKET
+
+    volumes:
+      - ../spark:/opt/devpulse/spark:ro           # the job code
+      - ../tests:/opt/devpulse/tests:ro           # unit tests (run pytest in-container)
+      - type: bind
+        source: ${APPDATA}/gcloud/application_default_credentials.json
+        target: /opt/spark/gcp/adc.json
+        read_only: true                           # never bake a credential in
+
+    working_dir: /opt/devpulse/spark
+    
+    command: tail -f /dev/null                    # idle; submit into it on demand
