@@ -19,7 +19,7 @@ provider "google" {
 
 # Bronze layer: raw, immutable GH Archive files exactly as ingested.
 resource "google_storage_bucket" "bronze" {
-  name     = var.bucket_name
+  name     = var.bronze_bucket_name
   location = var.region
 
   # One IAM model for the whole bucket; ACLs are legacy and error-prone.
@@ -49,7 +49,27 @@ resource "google_storage_bucket" "bronze" {
   force_destroy = true
 }
 
-# Silver layer: cleaned/typed tables loaded from Spark, queried by dbt.
+# Silver layer (lake): cleaned, deduped, typed Parquet written by the Spark job.
+resource "google_storage_bucket" "silver" {
+  name     = var.silver_bucket_name
+  location = var.region
+
+  # One IAM model for the whole bucket; ACLs are legacy and error-prone.
+  uniform_bucket_level_access = true
+
+  # Derived data, but still never public.
+  public_access_prevention = "enforced"
+
+  # NO versioning (unlike bronze): silver is fully reproducible by re-running
+  # Spark over bronze, so keeping prior object versions is wasted storage.
+  # Bronze is the immutable source of truth; silver is regenerable.
+
+  # DEV ONLY: lets `terraform destroy` remove a non-empty bucket for clean
+  # teardown. In production set this to false so TF can't delete live data.
+  force_destroy = true
+}
+
+# Silver layer (warehouse): cleaned/typed tables loaded from Spark, queried by dbt.
 resource "google_bigquery_dataset" "silver" {
   dataset_id  = var.dataset_id
   location    = var.region
