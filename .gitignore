@@ -12,3 +12,8 @@ __pycache__/
 test.py
 
 airflow/logs
+
+# Spark local scratch (created when Spark runs with a local warehouse/metastore)
+spark-warehouse/
+metastore_db/
+derby.log
