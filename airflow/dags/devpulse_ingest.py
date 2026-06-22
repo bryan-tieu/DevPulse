@@ -59,7 +59,12 @@ with DAG(
     schedule="@hourly",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
-    max_active_runs=1,
+    # No max_active_runs cap: Day 5 set it to 1 only because the in-memory Counter
+    # couldn't survive backfill fan-out (OOM). The Spark silver job spills to disk
+    # and parallelises, so the single-machine bound it fenced is gone — runs may
+    # now overlap. (Practical local ceiling is RAM: each run spawns a 4g Spark
+    # driver, so a couple concurrent is fine; that's an operational, not a
+    # correctness, limit.)
     default_args=default_args,
     tags=["devpulse", "phase1"],
 ) as dag:
