@@ -57,6 +57,10 @@ x-airflow-common:
     PYTHONPATH: /opt/devpulse
     GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/gcp/adc.json
     GOOGLE_CLOUD_PROJECT: devpulse-dp2622
+    # Host paths for the DockerOperator (silver_transform) bind mounts — resolved
+    # by the host daemon, not this container. Set in airflow/.env.
+    HOST_PROJECT_DIR: ${HOST_PROJECT_DIR}
+    HOST_ADC: ${HOST_ADC}
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     # AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
     # AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
@@ -80,6 +84,7 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - /var/run/docker.sock:/var/run/docker.sock
     # --- DevPulse code (Step 3) ---
     - ../ingestion:/opt/devpulse/ingestion:ro
     - ../transform:/opt/devpulse/transform:ro
