@@ -50,13 +50,13 @@ Execute in order; one small commit per step. Steps 1, 6 are setup/verify, not co
 - 📦 **Small, reviewable commits & understand-don't-rubber-stamp.** One step per commit (`add silver_events bq table + parquet loader`, `load silver parquet to bigquery`, `trigger spark from airflow via DockerOperator`, `retire counter transform, drop max_active_runs`). Want the *why* for created_at-vs-event_hour partitioning, load-job-vs-connector, and DockerOperator-vs-alternatives before each lands.
 
 ## Done criteria
-- [ ] A HOUR-partitioned (on `created_at`) `silver_events` BQ table exists, created idempotently with an **explicit schema** matching the silver columns.
-- [ ] `transform/load_silver.py` loads one hour's silver **Parquet** from GCS → `silver_events${YYYYMMDDHH}` via a native load job (`SOURCE_FORMAT=PARQUET`, `WRITE_TRUNCATE`), partition-scoped; counts **reconcile** to the Day 6 silver count (180,386) for `2024-01-01 15:00`.
-- [ ] The Airflow DAG runs `wait_for_archive >> ingest >> silver_transform >> load_silver`; `silver_transform` triggers the **Spark** job (mechanism decided + documented, security surface flagged).
-- [ ] The in-memory `Counter` (`transform/event_counts.py` / the old `transform` task) is **retired** and `max_active_runs=1` is **removed**, with the rationale recorded.
-- [ ] Full-chain **idempotency proven**: a same-hour re-run replaces — not duplicates — **both** the silver Parquet partition (GCS) **and** the BQ partition.
-- [ ] A unit test covers the new `load_silver` path/decorator derivation; no secrets/keys/scratch tracked in git.
-- [ ] `docker compose down` (both stacks) + `terraform destroy` run; status + `decisions.md` updated; **the Phase 1 PySpark milestone box is ticked.**
+- [x] A HOUR-partitioned (on `created_at`) `silver_events` BQ table exists, created idempotently with an **explicit schema** matching the silver columns.
+- [x] `transform/load_silver.py` loads one hour's silver **Parquet** from GCS → `silver_events${YYYYMMDDHH}` via a native load job (`SOURCE_FORMAT=PARQUET`, `WRITE_TRUNCATE`), partition-scoped; counts **reconcile** to the Day 6 silver count (180,386) for `2024-01-01 15:00`.
+- [x] The Airflow DAG runs `wait_for_archive >> ingest >> silver_transform >> load_silver`; `silver_transform` triggers the **Spark** job via **DockerOperator** over the host socket (mechanism decided + documented, host-root surface flagged).
+- [x] The in-memory `Counter` (the old `transform` task) is **retired** and `max_active_runs=1` is **removed**, with the rationale recorded. (`event_counts.py` **deprecated not deleted** — `api/main.py` still reads its table; full removal is the Phase 3 API rework.)
+- [x] Full-chain **idempotency proven**: a same-hour `dags test` re-run replaced — not duplicated — **both** the silver Parquet partition (12 GCS files) **and** the BQ partition (180,386 rows).
+- [x] A unit test covers the new `load_silver` path/decorator derivation (padding asymmetry); no secrets/keys/scratch tracked in git.
+- [x] Status + `decisions.md` updated; **the Phase 1 PySpark milestone box is ticked.** _(Teardown — `docker compose down` both stacks + `terraform destroy` — pending at session end.)_
 
 ## Learning goals
 1. **BigQuery load jobs from Parquet** — load-vs-query (why a load job is free and isn't bytes-billed), Parquet's embedded schema vs. an explicit BQ schema as the contract, and `WRITE_TRUNCATE` + the `$YYYYMMDDHH` decorator as the warehouse idempotency primitive (recapped from Day 5, now from a Parquet source).

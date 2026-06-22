@@ -288,6 +288,63 @@ PySpark to the path. CI provides its own runner in Phase 3.
 
 ---
 
+## Day 7 — Silver → BigQuery + wire Spark into Airflow (2026-06-22)
+
+### Native BQ Parquet load job, not the spark-bigquery connector
+Silver Parquet → BQ via `load_table_from_uri(source_format=PARQUET)`, not a write from Spark. A load
+job is **free** (loads aren't query jobs — no bytes billed) and keeps **Parquet-in-the-lake as the
+durable contract** with BQ as a swappable load target. The spark-bigquery connector is the right tool
+for streaming / huge writes, but for a free hourly batch it adds a second shaded jar and re-couples the
+BQ write into the Spark run. Same `$YYYYMMDDHH` decorator + `WRITE_TRUNCATE` idempotency as Day 5, now
+from a Parquet source.
+
+### Partition on `created_at`, not the path's `event_hour`
+Spark's `partitionBy("event_date","event_hour")` **strips those columns out of the Parquet files** —
+they live only in the GCS path. `created_at` is a real in-file column, so the BQ table is HOUR-
+partitioned on it (continues Day 5's HOUR grain), and we load one hour's path prefix into
+`silver_events$YYYYMMDDHH`. *(Rejected: BQ hive-partitioning options to recover the path columns — extra
+config, and `event_date` is only DAY grain. Derive any date/hour dims in dbt staging instead.)* **Side
+effect banked:** malformed-`created_at` rows cast to NULL in Spark → land under
+`event_date=__HIVE_DEFAULT_PARTITION__`, so the hour-prefix glob never sees them and the decorator load
+can't hit a partition mismatch. They're effectively **quarantined, not loaded** — a real DQ gap to
+formalize with the Phase 2 Great Expectations gate (count + alert, don't silently drop).
+
+### Airflow → Spark via DockerOperator over the Docker socket (DooD)
+The Spark job lives in a separate stack, so `silver_transform` is a **DockerOperator** that launches a
+fresh `devpulse-spark` container on the **host daemon** via a mounted `/var/run/docker.sock`
+(Docker-out-of-docker — a *sibling* container, not nested). Three gotchas banked: (1) the socket mount =
+**host-root** on the Airflow scheduler (accepted for a local single-user box; documented inline in
+compose); (2) **host-path injection** — mount sources are resolved by the host daemon, not the
+scheduler, so `HOST_PROJECT_DIR`/`HOST_ADC` are injected as env (forward-slash paths) rather than the
+scheduler's `/opt/...`; (3) `mount_tmp_dir=False` — the default tries to bind a host tmp dir and fails
+on Windows. Also absolute `/opt/spark/bin/spark-submit` (the launcher isn't on a bare-`exec` PATH).
+**At scale this becomes `KubernetesPodOperator` / a Dataproc submit operator** — an authenticated API
+call to a scheduler with its own RBAC, no socket; the task ("run this spark-submit") is unchanged, only
+the submission transport. *Rejected: `SparkSubmitOperator` (expects a Spark client/cluster in the
+Airflow image — mismatched with single-node Docker); a merged Spark+Airflow image (no socket, but
+multi-GB and re-couples the stacks Day 6 split); `BashOperator + docker compose run` (same socket,
+worse observability).*
+
+### Retire the Counter: deprecate (not delete) + drop `max_active_runs`
+The thin-slice **swap**: `silver_transform >> load_silver` replaces the in-memory `Counter` `transform`
+task. `max_active_runs=1` is **removed** — it was a *correctness* fence (Day 5) around a memory-bound
+transform; Spark spills to disk and parallelises, so the bound it guarded is gone (the new ceiling is
+RAM: each run spawns a 4g Spark driver — an *operational*, not correctness, limit). `transform/
+event_counts.py` is **deprecated, not deleted**: `api/main.py` still reads its `hourly_event_counts`
+table and `run.py` still calls it, so it lives until the Phase 3 API rework moves the API onto
+silver/gold. *(The day's outline sanctioned "delete **or clearly deprecate**"; the live API dependency
+makes deprecate the correct call — a clean delete would silently break the endpoint for no benefit.)*
+
+### Dev tooling finally tracked: `requirements-dev.txt`
+`ruff`/`black`/`pytest` were configured in `pyproject.toml` but never installed or tracked. Added a
+`requirements-dev.txt` (kept out of the runtime `requirements.txt`) so the lint/test tooling is
+reproducible and CI-ready (Phase 3). `pytest` confined to `tests/` (Airflow's `logs/` symlink is
+unstattable on Windows → `WinError 1920`), and the Spark tests skip via `conftest` `collect_ignore` when
+PySpark is absent, so the pure-Python `load_silver` test (path/decorator padding asymmetry) runs on the
+host venv.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
