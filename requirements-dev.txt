@@ -1,0 +1,5 @@
+# Dev/CI tooling — not needed at runtime (kept out of requirements.txt).
+# Install into the .venv: pip install -r requirements-dev.txt
+ruff
+black
+pytest

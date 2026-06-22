@@ -45,13 +45,26 @@ def _ensure_table(client: bigquery.Client) -> None:
     client.create_table(table, exists_ok=True)
 
 
-def load_silver(date: str, hour: int) -> str:
-    # Glob this hour's Hive partition only. NOTE: event_hour is UNPADDED in the
-    # silver path (event_hour=15), unlike bronze's zero-padded hour=15.
-    source_uri = f"gs://{SILVER_BUCKET}/events/event_date={date}/event_hour={hour}/*.parquet"
+def _hour_partition(date: str, hour: int) -> tuple[str, str]:
+    """Map (date, hour) to the silver Parquet glob suffix and the BQ
+    partition-decorator suffix. The two formats deliberately DIFFER:
 
-    # Partition-scoped target - Day 5's $YYYYMMDDHH decoration, one layer up.
-    partition = date.replace("-", "") + f"{hour:02d}"
+      * the GCS path uses Spark's UNPADDED hour (event_hour=5) — partitionBy
+        wrote hour() as an int;
+      * the BQ decorator is zero-padded YYYYMMDDHH (...0105).
+
+    Mixing them up is an empty glob or a wrong-partition load — hence the test.
+    """
+    path = f"events/event_date={date}/event_hour={hour}/*.parquet"
+    decorator = date.replace("-", "") + f"{hour:02d}"
+    return path, decorator
+
+
+def load_silver(date: str, hour: int) -> str:
+    # Glob this hour's Hive partition only; partition-scoped target is Day 5's
+    # $YYYYMMDDHH decorator, one layer up.
+    path, partition = _hour_partition(date, hour)
+    source_uri = f"gs://{SILVER_BUCKET}/{path}"
     load_target = f"{TABLE_ID}${partition}"
 
     job_config = bigquery.LoadJobConfig(
