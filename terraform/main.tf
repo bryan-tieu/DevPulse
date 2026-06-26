@@ -80,6 +80,20 @@ resource "google_bigquery_dataset" "silver" {
   delete_contents_on_destroy = true
 }
 
+# Gold layer (warehouse): business-ready dbt models (star schema + marts).
+# Its OWN dataset, not silver's: dbt owns/writes gold, the pipeline owns silver.
+# Same region as silver — dbt's gold models read silver via ref()/source(), and a
+# cross-region read between datasets is a hard error in BigQuery, not just a cost.
+resource "google_bigquery_dataset" "gold" {
+  dataset_id  = var.gold_dataset_id
+  location    = var.region
+  description = "DevPulse gold-layer dbt models (star schema + marts, queried by the API)."
+
+  # DEV ONLY: lets `terraform destroy` drop the dataset even if it has tables.
+  # In production set this to false so TF can't delete the warehouse.
+  delete_contents_on_destroy = true
+}
+
 # Non-human identity the pipeline (ingestion + Spark) authenticates as.
 resource "google_service_account" "pipeline" {
   account_id   = "devpulse-pipeline"
@@ -99,6 +113,16 @@ resource "google_storage_bucket_iam_member" "pipeline_bronze_objects" {
 # Create/load tables in the silver dataset only.
 resource "google_bigquery_dataset_iam_member" "pipeline_silver_editor" {
   dataset_id = google_bigquery_dataset.silver.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.pipeline.email}"
+}
+
+# Build dbt models in the gold dataset only. Forward-looking: gold is written by
+# dbt, which today runs as personal ADC (so this grant is unused yet). It lands
+# now so the SA-impersonation switch (security backlog) is a one-flip change, not
+# a scramble. If dbt later gets its own identity, move this grant to it.
+resource "google_bigquery_dataset_iam_member" "pipeline_gold_editor" {
+  dataset_id = google_bigquery_dataset.gold.dataset_id
   role       = "roles/bigquery.dataEditor"
   member     = "serviceAccount:${google_service_account.pipeline.email}"
 }

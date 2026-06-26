@@ -13,6 +13,11 @@ output "dataset_id" {
   description = "BigQuery silver dataset ID."
 }
 
+output "gold_dataset_id" {
+  value       = google_bigquery_dataset.gold.dataset_id
+  description = "BigQuery gold dataset ID (dbt models)."
+}
+
 output "service_account_email" {
   value       = google_service_account.pipeline.email
   description = "Email of the pipeline service account."

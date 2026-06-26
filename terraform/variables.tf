@@ -22,3 +22,8 @@ variable "dataset_id" {
   type        = string
   description = "BigQuery dataset ID for the silver-layer tables (letters/numbers/underscores only)."
 }
+
+variable "gold_dataset_id" {
+  type        = string
+  description = "BigQuery dataset ID for the gold-layer dbt models (letters/numbers/underscores only)."
+}
