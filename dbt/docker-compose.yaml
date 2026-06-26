@@ -1,0 +1,25 @@
+services:
+  dbt:
+    build: .
+    image: devpulse-dbt
+    environment:
+      # Keyless auth: dbt's oauth method resolves ADC via this env var → the
+      # mounted file. Same ADC the Spark/ingestion stacks use; no SA key minted.
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/dbt/gcp/adc.json
+      GOOGLE_CLOUD_PROJECT: devpulse-dp2622
+      DBT_PROFILES_DIR: /opt/devpulse/dbt
+
+    env_file:
+      - ../.env                                   # GCP_PROJECT/BQ_DATASET/buckets
+
+    volumes:
+      - ../dbt:/opt/devpulse/dbt                  # the dbt project (read-write: dbt writes target/, logs/)
+      - type: bind
+        source: ${APPDATA}/gcloud/application_default_credentials.json
+        target: /opt/dbt/gcp/adc.json
+        read_only: true                           # never bake a credential in
+
+    working_dir: /opt/devpulse/dbt
+
+    # `docker compose run --rm dbt <args>` → dbt debug / run / build / docs ...
+    entrypoint: ["dbt"]

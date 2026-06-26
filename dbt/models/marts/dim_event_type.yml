@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: dim_event_type
+    description: >
+      Event-type dimension: the distinct set of GitHub event types observed in
+      the events. Natural key (event_type) — no surrogate key needed.
+    columns:
+      - name: event_type
+        description: GitHub event type. Natural key of this dimension.
+        data_tests:
+          - not_null
+          - unique
+          # The expected domain: the documented GitHub event types. A type
+          # outside this set is a real upstream finding — fail loudly, don't widen
+          # the list to make it pass.
+          - accepted_values:
+              values:
+                - CommitCommentEvent
+                - CreateEvent
+                - DeleteEvent
+                - ForkEvent
+                - GollumEvent
+                - IssueCommentEvent
+                - IssuesEvent
+                - MemberEvent
+                - PublicEvent
+                - PullRequestEvent
+                - PullRequestReviewCommentEvent
+                - PullRequestReviewEvent
+                - PullRequestReviewThreadEvent
+                - PushEvent
+                - ReleaseEvent
+                - SponsorshipEvent
+                - WatchEvent

@@ -1,0 +1,48 @@
+version: 2
+
+# The seam between the silver and gold layers. Staging models read this via
+# {{ source('silver', 'silver_events') }} — never a hardcoded table name — so dbt
+# owns the dependency graph and can draw the lineage silver -> staging -> marts.
+sources:
+  - name: silver
+    description: >
+      Silver layer in BigQuery: cleaned, deduped, typed GitHub events written by
+      the PySpark job and loaded hour-by-hour. The contract the gold models build on.
+    # Project + dataset from .env (single source of truth), same as the profile —
+    # so the source location can't drift from the pipeline's.
+    database: "{{ env_var('GCP_PROJECT') }}"
+    schema: "{{ env_var('BQ_DATASET') }}" # = devpulse_silver
+
+    tables:
+      - name: silver_events
+        description: >
+          One row per public GitHub event (deduped on event_id in Spark).
+          HOUR-partitioned on created_at. `payload` is deliberately excluded
+          upstream (varying shape + author-email PII).
+        # Freshness intent for LIVE data: warn/error if silver stops loading.
+        # NOTE: only runs on `dbt source freshness`, not build/run. Against the
+        # fixed 2024-01-01 dev backfill it would always report stale, so we don't
+        # gate on it today — it documents the production intent.
+        # (dbt 1.11: loaded_at_field/freshness live under config, not top-level.)
+        config:
+          loaded_at_field: created_at
+          freshness:
+            warn_after: { count: 12, period: hour }
+            error_after: { count: 24, period: hour }
+        columns:
+          - name: event_id
+            description: Unique GitHub event id (numeric string); the dedupe key in silver.
+          - name: event_type
+            description: "GitHub event type, e.g. PushEvent, PullRequestEvent, WatchEvent."
+          - name: actor_id
+            description: Numeric id of the actor (user) who triggered the event.
+          - name: actor_login
+            description: GitHub login (username) of the actor.
+          - name: repo_id
+            description: Numeric id of the repository the event occurred on.
+          - name: repo_name
+            description: "Full repository name (owner/repo)."
+          - name: public
+            description: Whether the event is public (always true for the GH Archive feed).
+          - name: created_at
+            description: Event timestamp (UTC); the table's HOUR partition column.

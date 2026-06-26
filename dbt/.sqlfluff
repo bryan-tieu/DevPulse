@@ -1,0 +1,18 @@
+[sqlfluff]
+# Lint the rendered SQL via dbt, so ref()/source() resolve to real relations.
+templater = dbt
+dialect = bigquery
+max_line_length = 100
+
+[sqlfluff:templater:dbt]
+project_dir = .
+
+# Keywords/identifiers lowercase; matches the staging/dim SQL style.
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = lower

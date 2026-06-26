@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: stg_events
+    description: >
+      Cleaned 1:1 staging view over the silver_events source, with
+      event_date/event_hour recovered from created_at. The base every gold model builds on.
+    columns:
+      - name: event_id
+        description: Unique GitHub event id; the grain of this model (one row per event).
+        data_tests:
+          - not_null
+          - unique
+      - name: event_type
+        description: "GitHub event type, e.g. PushEvent."
+        data_tests:
+          - not_null
+      - name: created_at
+        description: Event timestamp (UTC).
+        data_tests:
+          - not_null

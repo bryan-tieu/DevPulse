@@ -17,3 +17,9 @@ airflow/logs
 spark-warehouse/
 metastore_db/
 derby.log
+
+# dbt: generated artifacts + host/user connection config
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/profiles.yml

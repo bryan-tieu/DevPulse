@@ -1,0 +1,31 @@
+# DevPulse dbt project — the GOLD layer: staging -> star schema -> marts, built
+# over the silver_events table in BigQuery (the dbt source).
+name: "devpulse"
+version: "1.0.0"
+config-version: 2
+
+# Which profile (in profiles.yml) supplies the warehouse connection.
+profile: "devpulse"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+# `dbt clean` removes these generated dirs.
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Materialization defaults per layer (override per-model with a config block):
+#   staging -> view  : cheap, no storage, always fresh against silver. Staging is
+#                      a 1:1 cleaned pass-through, so a table would waste storage
+#                      and go stale.
+#   marts   -> table : stable, fast to read; the API/dashboard query these.
+# (fact_events flips to incremental on a later day — set per-model, not here.)
+models:
+  devpulse:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
