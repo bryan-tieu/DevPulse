@@ -345,6 +345,79 @@ host venv.
 
 ---
 
+## Day 8 — Phase 2 begins: dbt bootstrap (source → staging → first dim) (2026-06-26)
+
+### dbt runs in its own Docker image, never the pipeline `.venv`
+Installing `dbt-bigquery` into the shared `.venv` **downgraded `google-cloud-storage` (3.12 → 3.1.1)
+and broke `black`** (dbt pins `pathspec` low) — a real, observed conflict, not a hypothetical. dbt's
+dependency tree (pandas, pyarrow, `google-cloud-aiplatform`, its own protobuf/pathspec pins) is too
+heavy to cohabit with the pipeline runtime. So dbt gets an **isolated image** (`dbt/Dockerfile` +
+compose), the `.venv` was recreated clean, and dbt is invoked `docker compose -f dbt/docker-compose.yaml
+run --rm dbt <cmd>`. This is also the **production form**: dbt later runs as an Airflow DockerOperator
+(exactly like Spark) and a CI image — same per-tool isolation principle as keeping Spark containerized.
+*(Rejected: one shared venv with pinned/reconciled versions — dbt and the pipeline deps diverge
+indefinitely; you'd fight the resolver forever.)*
+
+### Gold is its own Terraform-managed dataset (`devpulse_gold`), region-matched to silver
+Gold gets a **separate BQ dataset** from silver: dbt owns/writes gold, the pipeline owns silver — clean
+ownership, access, and cost boundaries, the medallion split mirrored in the warehouse. Provisioned in
+**Terraform** (not a dbt-auto-created or `bq mk` dataset) so it's tracked and `terraform destroy` cleans
+it up — an ad-hoc dataset would be orphaned state between sessions. **Same `us-central1` as silver** is
+load-bearing, not cosmetic: dbt's gold models read silver via `ref()`/`source()`, and a cross-region
+read between datasets is a hard BigQuery error. The pipeline-SA `dataEditor` grant on gold lands now
+(unused while dbt runs as personal ADC) so the SA-impersonation switch is a one-flip change later.
+
+### Keyless dbt auth + env_var single-source config
+`profiles.yml` uses `method: oauth` → resolves the same **ADC** the Spark/ingestion stacks use
+(bind-mounted `:ro`, found via `GOOGLE_APPLICATION_CREDENTIALS`); **no SA key minted** (Day 2 rule).
+`project`/`schema` come from `env_var('GCP_PROJECT')`/`env_var('BQ_DATASET')` (the `.env`), so dbt's
+connection can't drift from the pipeline's. `profiles.yml` is **gitignored** (host/user config; no
+secrets under oauth, but kept out of git on principle).
+
+### Materialization per layer: staging=view, marts=table (incremental deferred)
+`staging: +materialized: view` — a 1:1 cleaned pass-through; a table would waste storage and go stale
+(verified: `CREATE VIEW (0 processed)` — defining a view scans **zero** bytes). `marts: +materialized:
+table` — stable, fast for the API/dashboard. `fact_events` flips to **incremental** on a later day (set
+per-model, the meaty lesson earns its own day). Set the tool's defaults deliberately; don't let dbt
+decide silently.
+
+### `source()`/`ref()` as the contract boundary — the seam IS the architecture
+`silver_events` is declared as a dbt **source** in its own step before any model uses it. Staging reads
+`{{ source('silver','silver_events') }}`; dims read `{{ ref('stg_events') }}` — **never** a literal
+table name. That indirection is what gives dbt the dependency DAG (correct ordering/parallelism) and the
+lineage graph. Source `freshness` is declared (warn/error windows) but **not gated today**: against the
+fixed 2024-01-01 backfill it would always report stale, and it only runs on `dbt source freshness`, not
+`build`/`run` — so it documents production intent without false-failing.
+
+### Staging recovers `event_date`/`event_hour`; `dim_event_type` is the deliberate first dim
+`stg_events` re-derives `event_date`/`event_hour` from `created_at` (`DATE()`/`EXTRACT(HOUR …)`, UTC —
+matching Spark) because `partitionBy` stripped them into the GCS path and the BQ load never carried them
+(the gotcha chained from Day 6 → 7 → here). `dim_event_type` is chosen as the **first** dimension because
+`event_type` is its own **natural key** — it exercises the full staging→dim→test loop and the first
+`ref()` edge **without** the surrogate-key machinery `dim_repo`/`dim_actor` need (that's Day 9).
+
+### Tests gate the build; `accepted_values` encodes the expected domain
+`dbt build` (not bare `run`) interleaves **models and their tests in DAG order** — a broken upstream
+fails its test before anything builds on top. `accepted_values` on `event_type` lists the **full
+documented GitHub event-type domain** (a superset of the 15 present), so legitimate types from other
+hours don't false-fail, but a genuinely unknown type **fails the build** — the loud DQ gate, not a
+silent pass. Reconciled: `stg_events` = 180,386 rows (matches silver), `dim_event_type` = 15 types.
+
+### Cost: dbt `build` is bytes-billed query jobs (unlike Day 7's free load), with a 10 MB floor
+`dbt run`/`build` issues **query jobs** — bytes-billed, unlike the free Day 7 Parquet *load* job. A
+view definition scans 0 bytes, but every query that *reads* hits BigQuery's **10 MB on-demand minimum**
+(observed: a `SELECT COUNT(*)` over the one-hour view billed 10 MB). Trivial now; at backfill scale,
+staging-as-view re-scans silver on every downstream build — the argument for partition pruning and (for
+the fact) incremental. The per-query `maximum_bytes_billed` cap remains the Phase 3 plan.
+
+### dbt is local-only today; Airflow/CI wiring deferred to Phase 2 Week 5
+Wiring `dbt build` into the Airflow DAG as a **test gate** (and dbt in CI) is Phase 2 Week 5, not today —
+a conscious deferral, flagged so it's not a forgotten gap. The Docker form chosen here is exactly what
+that wiring will reuse. `sqlfluff` (+ its **dbt templater**, so `ref()`/`source()` resolve) is baked
+into the same image and lints the models clean.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
