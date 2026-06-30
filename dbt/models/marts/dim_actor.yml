@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: dim_actor
+    description: >
+      One row per GitHub actor/user (grain: actor_id). actor_sk is a surrogate
+      (md5) key; actor_login is the latest observed login (Type-1 / overwrite).
+      Identity is limited to the public id + login — no email/PII (dropped upstream).
+    columns:
+      - name: actor_sk
+        description: Surrogate key (md5 of actor_id); the dim PK and the fact_events FK.
+        data_tests:
+          - not_null
+          - unique
+      - name: actor_id
+        description: Natural/business key — GitHub's numeric actor (user) id.
+        data_tests:
+          - not_null
+          - unique
+      - name: actor_login
+        description: "Latest observed public GitHub login (username); Type-1. Never email."
+        data_tests:
+          - not_null

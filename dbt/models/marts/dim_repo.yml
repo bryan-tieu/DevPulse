@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: dim_repo
+    description: >
+      One row per GitHub repository (grain: repo_id). repo_sk is a surrogate (md5)
+      key; repo_name is the latest observed name (Type-1 / overwrite, no history).
+    columns:
+      - name: repo_sk
+        description: Surrogate key (md5 of repo_id); the dim PK and the fact_events FK.
+        data_tests:
+          - not_null
+          - unique
+      - name: repo_id
+        description: Natural/business key — GitHub's numeric repository id.
+        data_tests:
+          - not_null
+          - unique
+      - name: repo_name
+        description: "Latest observed full repository name (owner/repo); Type-1."
+        data_tests:
+          - not_null
