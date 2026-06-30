@@ -418,6 +418,64 @@ into the same image and lints the models clean.
 
 ---
 
+## Day 9 — Deepen the star schema: the remaining dimensions (2026-06-29)
+
+### dbt packages: `packages.yml` committed, `dbt_packages/` ignored, lockfile pinned
+Added `dbt_utils` via `packages.yml` + `dbt deps`. Same manifest-vs-fetched-code split as
+`requirements.txt`/`.venv`: the manifest **and** dbt's generated `package-lock.yml` are committed
+(the lock pins the exact resolved version — **1.4.1** — for reproducible builds, like
+`.terraform.lock.hcl`), while the downloaded macro code in `dbt_packages/` stays gitignored. Pinned a
+**1.x range** (`>=1.1.0, <2.0.0`) compatible with dbt-core 1.11 rather than floating, so a future
+breaking major can't bump in silently. `dbt_utils` earns its place for two macros: `generate_surrogate_key`
+and `date_spine`.
+
+### Surrogate keys via `generate_surrogate_key` — with the honest tradeoff stated
+`dim_repo`/`dim_actor` get md5 **surrogate keys** (`repo_sk`/`actor_sk`) over their natural keys, kept
+alongside the natural key (`repo_id`/`actor_id`). The surrogate is the dim PK and the uniform
+single-column FK `fact_events` will join on. **Honest caveat (the teaching point):** `repo_id`/`actor_id`
+are already clean single-source integers that would serve as keys *as-is* — the surrogate earns its keep
+when keys are composite/multi-source or the natural key churns. We adopt the Kimball pattern here to
+practise it and give the fact a uniform key shape, **not** out of strict necessity. `dim_event_type`
+deliberately stays on its natural key (Day 8) — surrogate keys aren't a reflex.
+
+### Type-1 (overwrite) dimensions via `QUALIFY ROW_NUMBER()`; Type-2 deferred
+`repo_name`/`actor_login` are **slowly-changing** (renames) while the ids are stable, so "one row per
+entity" needs a rule for *which* name. Keep the **latest** via
+`QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY created_at DESC) = 1` — a **Type-1** dim (current
+value only, no history). `QUALIFY` is BigQuery sugar that filters a window function without a wrapping
+subquery. **SCD Type-2** (versioned rows with valid-from/valid-to) is the production alternative, noted
+and deferred. Over one hour no rename appears, so the pattern is **exercised, not stress-tested** — flagged
+as such. Grain reconciled to silver's distinct counts: `dim_repo` **55,245**, `dim_actor` **39,030** (no
+fan-out — the latest-wins collapse is correct), and surrogate `unique` tests pass (no md5 collisions).
+
+### `dim_date` is GENERATED (`date_spine`), not `DISTINCT event_date` — with a SMART key
+The date dimension is built from `dbt_utils.date_spine` over a fixed 2024 range (end-exclusive →
+**366 rows**, leap year), **not** `SELECT DISTINCT event_date`. A derived calendar would be **gappy** — a
+day with zero events = a missing row — which silently breaks date-range joins in the marts. A date dim is
+a **conformed** dimension shared by every fact/mart, so it must be complete and event-independent.
+**`date_key` is a SMART key** — a readable `YYYYMMDD` integer — the deliberate **exception** to the
+"surrogate keys are meaningless" rule (long-standing Kimball convention: human-readable fact rows + cheap
+integer range filters), so this dim does **not** use `generate_surrogate_key`. Cost note: `date_spine`
+**scans 0 bytes** (pure generation from literals), unlike the dims that read `stg_events`.
+
+### `relationships` tests deferred with the fact (Day 10)
+Today's tests are `not_null`/`unique` on **both** the surrogate and natural key of each dim (a surrogate
+collision *or* a natural-key dupe both fail loudly). The `relationships` test (FK → dim PK) is the natural
+next assertion but is **deferred to Day 10** — it links `fact_events`'s FKs to these dims, and there's no
+fact yet. The dims built today are precisely those FK targets.
+
+### Lint hygiene: macro-generated SQL + the dbt-1.11 generic-test deprecation
+`date_spine` expands to multi-line generated SQL carrying its own blank lines (sqlfluff **LT15**) that the
+source can't reach — scoped with an inline `-- noqa: disable=LT15 / enable=LT15` around the macro call only
+(not a global rule drop). `quarter` is flagged **RF04** ("keyword as identifier") by sqlfluff's BigQuery
+reserved list even though BigQuery itself allows it as an identifier (and `year`/`month`/`day` aren't
+flagged — a quirk of sqlfluff's keyword set) → a one-line `-- noqa: RF04`. Separately, fixed a **dbt-1.11
+deprecation** surfaced by the build: generic-test arguments (the Day 8 `accepted_values` on
+`dim_event_type`, and today's `accepted_range`) must nest under an **`arguments:`** property — moved them,
+deprecation gone.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless

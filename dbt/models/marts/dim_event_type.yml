@@ -15,21 +15,23 @@ models:
           # outside this set is a real upstream finding — fail loudly, don't widen
           # the list to make it pass.
           - accepted_values:
-              values:
-                - CommitCommentEvent
-                - CreateEvent
-                - DeleteEvent
-                - ForkEvent
-                - GollumEvent
-                - IssueCommentEvent
-                - IssuesEvent
-                - MemberEvent
-                - PublicEvent
-                - PullRequestEvent
-                - PullRequestReviewCommentEvent
-                - PullRequestReviewEvent
-                - PullRequestReviewThreadEvent
-                - PushEvent
-                - ReleaseEvent
-                - SponsorshipEvent
-                - WatchEvent
+              # dbt 1.11: generic-test args nest under `arguments`.
+              arguments:
+                values:
+                  - CommitCommentEvent
+                  - CreateEvent
+                  - DeleteEvent
+                  - ForkEvent
+                  - GollumEvent
+                  - IssueCommentEvent
+                  - IssuesEvent
+                  - MemberEvent
+                  - PublicEvent
+                  - PullRequestEvent
+                  - PullRequestReviewCommentEvent
+                  - PullRequestReviewEvent
+                  - PullRequestReviewThreadEvent
+                  - PushEvent
+                  - ReleaseEvent
+                  - SponsorshipEvent
+                  - WatchEvent

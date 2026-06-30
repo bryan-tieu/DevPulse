@@ -14,15 +14,18 @@
 -- Range = all of 2024 (the backfill window). end_date is EXCLUSIVE in date_spine,
 -- so 2025-01-01 yields through 2024-12-31 (366 rows -- 2024 is a leap year).
 
+-- date_spine expands to multi-line generated SQL that carries its own blank
+-- lines (LT15), which we can't reach from here — disable that one layout rule
+-- across the macro call only, then re-enable it.
+-- noqa: disable=LT15
 with spine as (
-
     {{ dbt_utils.date_spine(
         datepart="day",
         start_date="cast('2024-01-01' as date)",
         end_date="cast('2025-01-01' as date)"
     ) }}
-
 ),
+-- noqa: enable=LT15
 
 calendar as (
 
@@ -35,7 +38,9 @@ select
     cast(format_date('%Y%m%d', full_date) as int64) as date_key,
     full_date,
     extract(year from full_date) as year,
-    extract(quarter from full_date) as quarter,
+    -- noqa: `quarter` is a valid BigQuery identifier; sqlfluff's BQ reserved
+    -- list flags it (unlike year/month/day), so silence RF04 on this line only.
+    extract(quarter from full_date) as quarter,  -- noqa: RF04
     extract(month from full_date) as month,
     extract(day from full_date) as day,
     -- BigQuery DAYOFWEEK: 1 = Sunday ... 7 = Saturday
