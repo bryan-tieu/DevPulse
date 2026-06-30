@@ -1,0 +1,12 @@
+# dbt package dependencies. Like requirements.txt for dbt: this manifest is
+# committed; the fetched package code lands in dbt_packages/ (gitignored) via
+# `dbt deps`. Run `dbt deps` after changing this file and before `dbt build`.
+#
+# dbt_utils: community helper macros. Used in the gold layer for
+#   - generate_surrogate_key()  -> hashed dimension keys (dim_repo/dim_actor)
+#   - date_spine()              -> the generated calendar (dim_date)
+# Pinned to the 1.x line (compatible with dbt-core 1.11); <2.0.0 guards against
+# a future breaking major bumping in silently.
+packages:
+  - package: dbt-labs/dbt_utils
+    version: [">=1.1.0", "<2.0.0"]
