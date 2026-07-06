@@ -476,6 +476,82 @@ deprecation gone.
 
 ---
 
+## Day 10 — The incremental `fact_events` + the first mart (2026-07-06)
+
+### `fact_events` is incremental via `merge` on `unique_key='event_id'` — the tradeoff vs `insert_overwrite`
+The fact is the project's first **incremental** model: `materialized='incremental'`, `incremental_strategy='merge'`,
+`unique_key='event_id'`, `partition_by={event_date, date}`, `cluster_by=['event_type']`, `on_schema_change='fail'`.
+First build (table absent → `is_incremental()` false) is a full `CREATE TABLE`; later builds `MERGE` the trailing
+window on `event_id` — an **upsert**, so a re-appearing event is overwritten, never duplicated (**row-grain
+idempotency**). **Honest tradeoff (the decision):** for immutable, append-only events, `insert_overwrite` by
+`event_date` partition would scan fewer bytes — it replaces whole partitions, the direct heir of Day 5's
+`$YYYYMMDDHH` decorator + Day 6's dynamic overwrite. We chose **`merge` anyway** to (1) exercise the `unique_key`
+upsert machinery and (2) get row-grain dedupe. `partition_by` is kept **regardless** so BigQuery can prune the
+MERGE's target scan; `cluster_by=['event_type']` is a read-side lever for the marts' `where event_type = …`.
+`on_schema_change='fail'` makes a column change break loudly (forcing a conscious `--full-refresh`).
+
+### FKs regenerated deterministically from the natural keys — no dimension lookup join
+`fact_events` computes `repo_sk`/`actor_sk` by calling `generate_surrogate_key` over its **own** `repo_id`/`actor_id`,
+and `date_key` by the same `YYYYMMDD` derivation `dim_date` uses. Because the surrogate is a **pure md5**, the fact's
+key equals the dim's key without ever joining the dimension — the `relationships` tests (below) prove it lands.
+`event_type` passes straight through (it's the natural PK of `dim_event_type`). The classic ETL alternative is a
+**surrogate-key lookup join** against each dim; it's required only when the dim mints *sequential* surrogates, for
+**early-arriving facts** (a fact referencing a dim member not yet loaded), or to physically enforce RI. Here both
+tables descend from `stg_events`, so the dims are complete relative to the fact and the join buys nothing.
+
+### Factless fact + degenerate dimension; no constant-`1` counter
+A GitHub event carries no natural additive quantity, so `fact_events` has **no measure column** — it is a **factless**
+fact; marts express volume as `COUNT(*)`. `event_id` is a **degenerate dimension** (a natural key kept on the fact,
+no dim table) and doubles as the merge `unique_key`. The Kimball "add `1 as event_count`" convenience is deliberately
+skipped: a plain `COUNT(*)` is clearer and costs nothing.
+
+### Watermark + 1-hour lookback for late-arriving rows
+The incremental filter is `where created_at >= (select timestamp_sub(max(created_at), interval 1 hour) from {{ this }})`
+— a high-water mark, minus a **1-hour lookback** (not a strict `> max`). The lookback is the **late-arriving-rows**
+hedge: events that surface after the watermark advanced get re-swept and MERGEd (the upsert dedupes them). Bigger
+lookback = safer against lateness, more bytes scanned. Over one static hour the filter only proves the mechanism —
+**exercised, not stress-tested** (same honesty as Day 9's Type-1 caveat).
+
+### `relationships` tests = referential integrity as code (the deferred Day 9 payoff)
+Each FK gets a `relationships` test → its dim PK (`repo_sk→dim_repo`, `actor_sk→dim_actor`, `date_key→dim_date`,
+`event_type→dim_event_type`), plus `not_null` on all four and `unique`/`not_null` on `event_id`. dbt compiles
+`relationships` to a **left-anti-join** (fact FK with no matching dim PK → fail), so a surrogate that didn't land
+breaks the build loudly. This is the assertion **deferred from Day 9**, and it's specifically why `dim_date` had to be
+**gap-free**: a `date_key` for a day missing from the calendar would fail here. All 10 fact tests pass first try — the
+deterministic-surrogate approach holds without a single join.
+
+### The MERGE cost surprise: bytes went UP, and why pruning only pays at scale
+Observed, and worth banking honestly: the first build (`CREATE TABLE`) scanned **8.5 MiB**; the second run (`MERGE`)
+scanned **40.4 MiB** — *more*, not less. A CTAS scans one thing (`stg_events`→silver); a MERGE scans **three** (the
+source, the **target** to match keys, and the `max(created_at)` watermark subquery on the target). Partition pruning
+**couldn't** help here because all 180,386 rows live in a **single** `event_date` partition that the full-hour
+lookback reprocesses entirely — nothing to prune. Merge's cost win only materializes at **scale**: months of daily
+partitions with an incremental run touching only the newest one, where the MERGE prunes to a sliver while a
+`--full-refresh` rebuild would scan everything. Over one hour you pay the MERGE overhead with none of the payoff — the
+textbook "exercised, not stress-tested" case, now with numbers.
+
+### First mart `trending_repos_daily`: WatchEvent = star, window function in the mart
+The first serving mart (a **table**, marts default) reads `ref('fact_events')` + `ref('dim_repo')` — never the source
+(a mart reaching past the fact bypasses the star). Grain = one row per `(repo, day)`. "Trending" = **stars gained**,
+and on GitHub the star action fires as a **`WatchEvent`** (historical naming — Watch *is* the star), so
+`stars = count(WatchEvent)` grouped by `(date_key, repo_sk)`, joined to `dim_repo` for the human-readable `repo_name`
+(the fact holds only the key). `rank() over (partition by date_key order by stars desc)` computes the leaderboard in
+the **mart**, not the fact. Grain guarded by `dbt_utils.unique_combination_of_columns(date_key, repo_sk)`. Over one
+hour "daily" is degenerate — the mart **shape** is exercised, and comes alive when the backfill expands.
+
+### Lint: clean with **no** new `noqa` — two issues fixed properly, not suppressed
+Both new models pass `sqlfluff` (BigQuery dialect, dbt templater) with **no** scoped `noqa` (unlike Day 9's
+`date_spine`/`quarter`). Three things needed correcting, all *fixed* rather than silenced: (1) a decorative
+box-drawing comment separator (>100 chars, **LT05**) → replaced with a plain comment matching the dims' style;
+(2) **RF02** — inside the incremental `where` block the *compiled* CTE references two tables (`stg_events` **and**
+the target `{{ this }}` in the watermark subquery), so `created_at` was **qualified** with table aliases (`src`/`dst`);
+(3) **LT02** — sqlfluff wants the `{% if is_incremental() %}` block's `where`/subquery indented one level deeper
+(it treats the Jinja conditional as an indent level), applied via `sqlfluff fix`. Worth noting: the incremental
+`where` block only *exists* in the compiled SQL when the target table exists (so `is_incremental()` renders true) —
+lint over a torn-down warehouse would skip those lines entirely, which is why linting was done with infra up.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
