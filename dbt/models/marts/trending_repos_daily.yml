@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: trending_repos_daily
+    description: >
+      Trending repositories per day: stars (WatchEvent count) per repo per day,
+      ranked within the day. Grain: one row per (repo, day). Built from
+      fact_events joined to dim_repo — the first fact->dim serving mart.
+    data_tests:
+      # Grain guard: the (date_key, repo_sk) pair is unique. A dupe would mean the
+      # GROUP BY leaked or the dim_repo join fanned out — fail loudly. dbt 1.11
+      # nests the arg under `arguments:`.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - repo_sk
+    columns:
+      - name: date_key
+        description: FK to dim_date (YYYYMMDD). Half the grain.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: repo_sk
+        description: FK to dim_repo (md5 surrogate). Half the grain.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repo')
+                field: repo_sk
+      - name: repo_name
+        description: Latest repo name from dim_repo (Type-1).
+        data_tests:
+          - not_null
+      - name: stars
+        description: Count of WatchEvent (GitHub star) for this repo on this day.
+        data_tests:
+          - not_null
+      - name: daily_rank
+        description: Rank of this repo within the day by stars (RANK, ties shared).
+        data_tests:
+          - not_null
