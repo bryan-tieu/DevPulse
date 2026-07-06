@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: fact_events
+    description: >
+      The fact at the center of the star: one row per GitHub event (grain:
+      event_id, a degenerate dimension). Factless — no additive measure; marts
+      express volume as COUNT(*). Incremental (merge on event_id). Carries four
+      FKs (repo_sk, actor_sk, date_key, event_type) resolved against the dims by
+      the relationships tests below.
+    columns:
+      - name: event_id
+        description: >
+          GitHub event id — the grain (degenerate dimension) and the merge
+          unique_key. unique+not_null prove one-row-per-event survived the merge.
+        data_tests:
+          - not_null
+          - unique
+
+      # ── FKs → dim PKs: referential integrity as code. Each relationships test
+      # compiles to a left-anti-join (fact FK with no matching dim PK => fail),
+      # so a surrogate that DIDN'T land in its dim breaks the build loudly. This
+      # is why dim_date had to be gap-free (Day 9): a date absent from the
+      # calendar would fail date_key's test here. not_null on each FK catches an
+      # orphan (NULL-key) fact row. dbt 1.11 nests generic-test args under
+      # `arguments:`.
+      - name: repo_sk
+        description: FK to dim_repo (md5 surrogate, regenerated from repo_id).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repo')
+                field: repo_sk
+
+      - name: actor_sk
+        description: FK to dim_actor (md5 surrogate, regenerated from actor_id).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_actor')
+                field: actor_sk
+
+      - name: date_key
+        description: FK to dim_date (smart YYYYMMDD key, derived from event_date).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+
+      - name: event_type
+        description: FK to dim_event_type (natural key, passed through).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_event_type')
+                field: event_type
