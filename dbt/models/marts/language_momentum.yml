@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: language_momentum
+    description: >
+      Programming-language momentum per day: event volume and active-repo count
+      per language per day, with a period-over-period momentum delta and a daily
+      rank. Grain: one row per (language, day). Language is enriched from the
+      repo_languages seed (LEFT join, unmatched -> 'Unknown'), routed via dim_repo
+      to recover the natural repo_id the lean fact doesn't carry.
+    data_tests:
+      # Grain guard: (date_key, language) is unique. A dupe would mean the GROUP BY
+      # leaked or the dim_repo/seed join fanned out — fail loudly. dbt 1.11 nests
+      # the arg under `arguments:`.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - language
+    columns:
+      - name: date_key
+        description: FK to dim_date (YYYYMMDD). Half the grain.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: language
+        description: >
+          Primary language from the repo_languages seed, or 'Unknown' when the
+          repo isn't seeded. Half the grain.
+        data_tests:
+          - not_null
+      - name: event_count
+        description: Count of events for this language on this day.
+        data_tests:
+          - not_null
+      - name: active_repos
+        description: Distinct repos active in this language on this day.
+        data_tests:
+          - not_null
+      - name: momentum_delta
+        description: >
+          event_count minus the prior day's event_count for this language (the
+          momentum signal). NULL for the first day per language — no prior period —
+          so intentionally NOT tested not_null (degenerate over a single hour).
+      - name: daily_rank
+        description: Rank of this language within the day by event_count (RANK, ties shared).
+        data_tests:
+          - not_null
