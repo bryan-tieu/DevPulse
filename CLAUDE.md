@@ -141,3 +141,4 @@ Full history of what each day delivered: [docs/history.md](docs/history.md).
 | `/verify-pipeline` | Prove idempotency + reconcile counts at any layer |
 | `/teach <topic>` | Deep-dive a concept the DevPulse way (tradeoffs, at-scale, interview framing) |
 | `/quiz` | Interview-prep quiz over everything built so far |
+| `/warmup` | Rebuild an existing component cold from a blank file (Days 1–11 were mostly Claude-written; these drills close the typing gap — tracker: `docs/warmups.md`) |

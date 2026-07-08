@@ -24,3 +24,5 @@ dbt/dbt_packages/
 dbt/logs/
 dbt/profiles.yml
 dbt/.user.yml
+# warm-up drill scratch files (progress log is docs/warmups.md, committed)
+warmups/
