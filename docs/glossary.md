@@ -200,6 +200,8 @@
 
 **Docker Compose** — Defines + runs multi-container stacks from a YAML file (`docker-compose.yaml`). Each of Airflow/Spark/dbt has its own compose file. `docker compose down` at session end.
 
+**Bind mount (vs. volume, vs. `COPY`)** — Mapping a **host** path into a container's filesystem at run time (`-v host:container`, compose `volumes:`, DockerOperator `Mount(type="bind")`). The container reads/writes the *same* files as the host — nothing is copied, unlike an image-build `COPY` (baked, immutable) or a named **volume** (Docker-managed storage, no meaningful host path). DevPulse uses bind mounts for all three run-time needs: code the dev loop edits (Spark scripts `:ro`, the dbt project **read-write** — dbt writes `target/`/`logs/`), the ADC credential (`:ro`, never baked — the no-SA-key rule), and the Docker socket (DooD). Two standing traps: mount **sources resolve on the host daemon**, not the calling container (hence `HOST_PROJECT_DIR`/`HOST_ADC` injection in the DAG), and on Docker Desktop a **typo'd/missing source becomes a silently created empty directory**, not an error. At scale bind mounts disappear: code is baked into versioned images; secrets come from workload identity/secret managers.
+
 **Docker socket (`/var/run/docker.sock`)** — The Unix socket the Docker daemon listens on. Mounting it into a container grants **host-root-equivalent** control — the surface the `silver_transform` DockerOperator accepts for local dev (at scale, replaced by an authenticated k8s/Dataproc API call).
 
 **FastAPI** — The Python web framework serving the gold marts as HTTP endpoints (`/event-counts`, later `/trending`, `/languages`, `/leaderboard`). Currently reads the deprecated `hourly_event_counts` table; moves onto gold in the Phase 3 rework.

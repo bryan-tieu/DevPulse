@@ -128,7 +128,7 @@ Full history of what each day delivered: [docs/history.md](docs/history.md).
 
 - **Phase:** Phase 2 modeling milestone ✅ complete → Phase 2 back half (quality gates) next.
 - **Last completed:** [Day 11](docs/daily/day-11.md) (2026-07-07) — `language_momentum` + `contributor_leaderboard` + `repo_languages` seed; `dbt build` PASS=69; reconciled 180,386 / 163,953.
-- **Next up:** Day 12 — **dbt build as an Airflow DAG gate** (DockerOperator, tests gate the pipeline) + **Great Expectations** bronze→silver gates (first target: formalize the malformed-`created_at` quarantine into a counted, alerting check).
+- **Next up:** [Day 12](docs/daily/day-12.md) — **dbt build as an Airflow DAG gate** (DockerOperator `dbt_build` task, green + red path proof). Great Expectations + alerting + run-metadata split to **Day 13** (one-day-one-lesson; first GE target: formalize the malformed-`created_at` quarantine into a counted, alerting check).
 - **Known issues:** none blocking. `event_counts.py` + `hourly_event_counts` are deprecated-not-deleted (API/`run.py` still read them; retire in Phase 3). Still personal ADC — pipeline-SA impersonation + silver-bucket grant on the security backlog. DockerOperator mounts the Docker socket (host-root; accepted for local dev — at scale: KubernetesPodOperator/Dataproc). BQ daily byte quota not adjustable on this account → per-query `maximum_bytes_billed` planned (Phase 3).
 - **Open decisions:** none — see [docs/decisions.md](docs/decisions.md).
 
