@@ -42,3 +42,5 @@ If the user wants to keep infra up (e.g. continuing tomorrow morning), record th
 ## 5. Sign off
 
 Give the user a 5-line summary: what landed, the proof numbers, what's next (Day N+1 topic), teardown state, and one interview-ready sentence about today's work.
+
+Coach-mode accounting (honest, every session): what Bryan implemented himself vs. what was scaffolded, and any hint-ladder level-4 "solved for me" items — those get flagged as re-implementation targets for a future warm-up, not quietly forgotten.

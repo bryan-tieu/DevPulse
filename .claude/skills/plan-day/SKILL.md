@@ -33,6 +33,7 @@ One paragraph: the concrete deliverables and the target end state.
 ## Build steps
 Numbered; **one small commit per step**; steps 0 (rehydrate/baseline-green) and the final verify step are setup, not commits.
 Each step: what to build, the *why* inline (the teaching), the gotchas to expect, and the verification (exact counts where known).
+**Mark every step 🧑‍💻 or 🤖** (coach mode, per CLAUDE.md): 🧑‍💻 = Bryan implements — Claude frames the problem, reviews the result, hints on request only. 🤖 = Claude may scaffold — boilerplate mirroring something already built twice, or repo chores. **The day's core lesson must live in 🧑‍💻 steps**; a plan whose lesson steps are all 🤖 is mis-scoped.
 
 ## Constraints & conventions
 Emoji-bulleted hard lines for the day (🧱 scope, 🚫 rejected approaches, 🔗 test requirements, 🔏 PII, 💸 cost, 📐 lint, 📦 commit granularity).

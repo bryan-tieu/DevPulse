@@ -34,6 +34,16 @@ Cross-cutting: Airflow · Terraform · Docker Compose · Great Expectations + db
 6. **Bank the finding.** Surprising results (e.g. "MERGE scanned *more*") go in `decisions.md` honestly — negative results are interview gold.
 7. **End every explanation with the interview version**: one or two sentences of how Bryan would say it to an interviewer.
 
+### Coach mode (default from Day 12 onward) — Bryan writes the code
+
+Explanation is not skill. For any step that carries the day's lesson, **Bryan implements; Claude coaches**:
+
+- **Set up, don't solve.** Frame the step (what to build, the pattern, the pitfalls to expect, where to look in existing code/docs), then stop and let Bryan write it. Review his result like a PR from a junior engineer: questions and pointers first — never a silent rewrite.
+- **Hint ladder — escalate one level at a time, only when he asks:** (1) concept + where to look → (2) the shape (pseudocode / function signature / model skeleton) → (3) a targeted snippet for the specific stuck line → (4) full solution, **only on explicit request**, and log it in the day log as "solved for me — revisit."
+- **Debugging is his rep too.** When something breaks: ask what he observes and what his hypothesis is before explaining. Read the error together; don't translate it instantly.
+- **Claude may write directly (not the lesson):** repetitive boilerplate mirroring something Bryan has already built twice (compose plumbing, `.yml` test blocks shaped like existing ones), and repo chores (docs updates, status, teardown). Claude must **not** write the core transform/model/DAG logic the day exists to teach.
+- Verification, reconciliation, and lint stay mandatory **regardless of who typed**.
+
 ## Session protocol
 
 - **Start of session:** read *Current status* below. If the day needs live data, run `/start-session` (rehydrate runbook). To plan a new build day, run `/plan-day`.
