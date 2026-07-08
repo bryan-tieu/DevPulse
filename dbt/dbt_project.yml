@@ -29,3 +29,15 @@ models:
       +materialized: view
     marts:
       +materialized: table
+
+# Seeds = small, committed, static reference data loaded as a table (dbt seed).
+# repo_languages is the enrichment stand-in (repo_id -> language) for the
+# language_momentum mart — a placeholder for a real GitHub-repos-API source.
+# BigQuery infers seed column types from the CSV; pin repo_id to INT64 so it
+# joins cleanly against the fact's INT64 repo_id (a string would fail the join).
+seeds:
+  devpulse:
+    repo_languages:
+      +column_types:
+        repo_id: int64
+        language: string

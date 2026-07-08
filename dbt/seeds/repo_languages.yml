@@ -1,0 +1,24 @@
+version: 2
+
+seeds:
+  - name: repo_languages
+    description: >
+      Enrichment reference data: repo_id -> primary programming language.
+      A STAND-IN for a production enrichment pipeline (a scheduled GitHub repos
+      API job -> a repo_metadata source table). Committed as a seed because it is
+      small, static, owned reference data. LEFT-joined into language_momentum;
+      unmatched repos bucket as 'Unknown' (never dropped). Over one ingested hour
+      most repos won't be in the seed — that's coverage, not a bug.
+    columns:
+      - name: repo_id
+        description: >
+          GitHub numeric repo id — the natural key the fact joins on. Typed INT64
+          via the seeds column_types config in dbt_project.yml.
+        data_tests:
+          # A dupe would fan out the mart's enrichment join → fail loudly.
+          - not_null
+          - unique
+      - name: language
+        description: Primary programming language for the repo.
+        data_tests:
+          - not_null
