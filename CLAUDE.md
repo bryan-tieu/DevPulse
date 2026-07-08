@@ -10,6 +10,7 @@ Auto-loaded every session. This file is the operative context: goals, hard rules
 | [docs/daily/day-NN.md](docs/daily/) | Full plan for each build day | Executing or writing a day plan |
 | [docs/DevPulse_Data_Engineering_Blueprint.md](docs/DevPulse_Data_Engineering_Blueprint.md) | The original 8-week design | Planning a new phase |
 | [docs/skills-map.md](docs/skills-map.md) | DE job-skill → where it's proven here | Framing work for resume/interviews |
+| [docs/operating-manual.md](docs/operating-manual.md) | Bryan-facing manual for this whole structure | He asks how to use the setup/skills |
 
 ---
 
