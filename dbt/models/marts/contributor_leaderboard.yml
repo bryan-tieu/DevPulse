@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: contributor_leaderboard
+    description: >
+      Top contributors per day: contribution count (over a defined contribution
+      event-type allowlist — Push/PullRequest/Issues/reviews/comments/Create,
+      excluding Watch/Fork) per actor per day, ranked within the day. Grain: one
+      row per (actor, day). Built from fact_events joined to dim_actor. Flat count
+      (each allowed event = 1); per-type weighting is a deferred refinement.
+    data_tests:
+      # Grain guard: (date_key, actor_sk) is unique. A dupe would mean the GROUP BY
+      # leaked or the dim_actor join fanned out — fail loudly.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_key
+              - actor_sk
+    columns:
+      - name: date_key
+        description: FK to dim_date (YYYYMMDD). Half the grain.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: actor_sk
+        description: FK to dim_actor (md5 surrogate). Half the grain.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_actor')
+                field: actor_sk
+      - name: actor_login
+        description: Latest actor login from dim_actor (Type-1). Public username, no PII.
+        data_tests:
+          - not_null
+      - name: contributions
+        description: Count of contribution-type events for this actor on this day.
+        data_tests:
+          - not_null
+      - name: daily_rank
+        description: Rank of this actor within the day by contributions (RANK, ties shared).
+        data_tests:
+          - not_null
