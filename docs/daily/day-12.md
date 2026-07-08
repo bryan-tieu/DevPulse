@@ -51,13 +51,13 @@ Execute in order; one small commit per step. Steps 0 and 4 are setup/verify, not
 - 📦 **Two commits, imperative mood:** `add dbt build gate task to devpulse_ingest` · `document dbt gate decisions and update status`. The sabotage from step 3 is never committed.
 
 ## Done criteria
-- [ ] `dbt_build` DockerOperator in `devpulse_ingest.py`: image `devpulse-dbt`, command `dbt build`, project dir mounted RW + ADC `:ro` via `HOST_PROJECT_DIR`/`HOST_ADC`, env mirroring `dbt/docker-compose.yaml`, chained `load_silver >> dbt_build`; DAG parses with zero import errors.
-- [ ] **Green path:** manual DAG run on the canonical hour — all 5 tasks green; `dbt_build` task log ends **PASS=69 WARN=0 ERROR=0**.
-- [ ] **Red path:** a deliberately broken test turns `dbt_build` red and the DAG run failed; sabotage reverted; re-run green. Observation about retries-on-real-failures banked in `decisions.md`.
-- [ ] Reconciliation holds post-gate-run: silver **180,386** = `language_momentum` SUM; `contributor_leaderboard` SUM = **163,953**; idempotency untouched (re-trigger duplicates nothing).
-- [ ] `ruff check .` + `black --check .` clean; no credentials/`profiles.yml` tracked.
-- [ ] `decisions.md` (gate pattern + cadence coupling + retry bluntness), `history.md`, CLAUDE.md status updated → Next up = Day 13 (Great Expectations + alerting + run-metadata).
-- [ ] Teardown: Airflow/Spark/dbt stacks down, `terraform destroy` clean.
+- [x] `dbt_build` DockerOperator in `devpulse_ingest.py`: image `devpulse-dbt`, command `dbt build`, project dir mounted RW + ADC `:ro` via `HOST_PROJECT_DIR`/`HOST_ADC`, env mirroring `dbt/docker-compose.yaml`, chained `load_silver >> dbt_build`; DAG parses with zero import errors. *(Commit `0769669`.)*
+- [x] **Green path:** pinned backfill on the canonical hour — all 5 tasks green; `ingest` skipped; `dbt_build` task log ends **PASS=69 WARN=0 ERROR=0**.
+- [x] **Red path — satisfied organically, scripted sabotage consciously skipped:** an unpinned trigger landed a stray 2026 hour; the static 2024 `dim_date` spine orphaned it → 4 `relationships` tests red → task red, run failed, retries re-failed identically (banked). Cleanup + `--full-refresh` restored PASS=69. Stronger evidence than the planned drill; substitution logged in `decisions.md`.
+- [x] Reconciliation holds post-gate-run: silver **180,386** = `language_momentum` SUM; `contributor_leaderboard` SUM = **163,953**; `trending` SUM(stars) = 7,236 = WatchEvent count; idempotency proven under the orchestrator (re-run changed nothing).
+- [x] `ruff check .` + `black --check .` clean (fixed pre-existing drift in 7 untouched files along the way); no credentials/`profiles.yml` tracked.
+- [x] `decisions.md` (5 entries: gate pattern, cadence coupling, the unpinned-trigger incident, cleanup forensics, static-spine finding), `history.md`, CLAUDE.md status updated → Next up = Day 13 (Great Expectations + alerting + run-metadata).
+- [x] Teardown: Airflow/Spark/dbt stacks down, `terraform destroy` clean (9 destroyed).
 
 ## Learning goals
 1. **Tests-as-a-gate vs tests-as-a-habit** — the difference between a test suite that runs when a human remembers and one wired into orchestration so bad data *stops the pipeline*; why the gate belongs downstream of the load it guards.

@@ -208,7 +208,7 @@
 
 **Great Expectations (GE)** — A data-quality framework for validation **gates** between layers (planned bronze→silver). Where the quarantined malformed-`created_at` rows get a count-and-alert instead of a silent drop.
 
-**Data quality (DQ) gate** — A validation checkpoint that **fails the run loudly** on bad data rather than passing it silently downstream. dbt tests gate gold; GE will gate bronze→silver.
+**Data quality (DQ) gate** — A validation checkpoint that **fails the run loudly** on bad data rather than passing it silently downstream. Since Day 12, dbt tests gate gold **in-pipeline**: the `dbt_build` DockerOperator ends `devpulse_ingest`, so a failing test fails the DAG run (proven live — an out-of-spine hour turned 4 `relationships` tests red and stopped the run). GE will gate bronze→silver (Day 13).
 
 **CI/CD (GitHub Actions)** — Continuous Integration/Delivery: on each PR, run lint + tests + `dbt build` + GE checks, and build/push images. Phase 3.
 

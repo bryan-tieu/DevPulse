@@ -81,7 +81,7 @@ Explanation is not skill. For any step that carries the day's lesson, **Bryan im
 | Canonical test hour | `2024-01-01 15:00` → **180,386** silver rows (180,387 raw, 1 dupe) |
 | Other canonical counts | dims 55,245 repos / 39,030 actors / 366 dates / 15 types · contributions 163,953 · dbt build **PASS=69** |
 | Source URL | `https://data.gharchive.org/YYYY-MM-DD-H.json.gz` |
-| Airflow DAG | `devpulse_ingest`: `wait_for_archive >> ingest >> silver_transform (DockerOperator) >> load_silver` |
+| Airflow DAG | `devpulse_ingest`: `wait_for_archive >> ingest >> silver_transform (DockerOperator) >> load_silver >> dbt_build (DockerOperator gate)` |
 
 ## Common commands (run from repo root)
 
@@ -126,10 +126,10 @@ Full history of what each day delivered: [docs/history.md](docs/history.md).
 
 > Keep this section SHORT (≤ 15 lines). `/end-session` updates it; the narrative goes to `docs/history.md`.
 
-- **Phase:** Phase 2 modeling milestone ✅ complete → Phase 2 back half (quality gates) next.
-- **Last completed:** [Day 11](docs/daily/day-11.md) (2026-07-07) — `language_momentum` + `contributor_leaderboard` + `repo_languages` seed; `dbt build` PASS=69; reconciled 180,386 / 163,953.
-- **Next up:** [Day 12](docs/daily/day-12.md) — **dbt build as an Airflow DAG gate** (DockerOperator `dbt_build` task, green + red path proof). Great Expectations + alerting + run-metadata split to **Day 13** (one-day-one-lesson; first GE target: formalize the malformed-`created_at` quarantine into a counted, alerting check).
-- **Known issues:** none blocking. `event_counts.py` + `hourly_event_counts` are deprecated-not-deleted (API/`run.py` still read them; retire in Phase 3). Still personal ADC — pipeline-SA impersonation + silver-bucket grant on the security backlog. DockerOperator mounts the Docker socket (host-root; accepted for local dev — at scale: KubernetesPodOperator/Dataproc). BQ daily byte quota not adjustable on this account → per-query `maximum_bytes_billed` planned (Phase 3).
+- **Phase:** Phase 2 back half (quality gates) — dbt gate ✅ landed; GE + alerting + run-metadata remain.
+- **Last completed:** [Day 12](docs/daily/day-12.md) (2026-07-08) — `dbt_build` DockerOperator gate in `devpulse_ingest`; green path (in-pipeline PASS=69) + an **organic red path** (unpinned trigger → stray 2026 hour → 4 `relationships` tests failed the run; cleaned via partition delete + `--full-refresh`). Reconciled 180,386 / 163,953.
+- **Next up:** Day 13 — **Great Expectations** bronze→silver gates (first target: formalize the malformed-`created_at` quarantine into a counted check) + **failure alerting** (alert-vs-retry routing) + **run-metadata logging**. Run `/plan-day` first.
+- **Known issues:** none blocking. `dim_date` is a static 2024 spine — out-of-range dates correctly fail the gate, but spine generation should become data-driven (logged Day 12; revisit with the backfill). `event_counts.py` + `hourly_event_counts` deprecated-not-deleted (retire in Phase 3). Still personal ADC — pipeline-SA impersonation + silver-bucket grant on the security backlog. DockerOperator mounts the Docker socket (host-root; accepted for local dev — at scale: KubernetesPodOperator/Dataproc). BQ daily byte quota not adjustable → per-query `maximum_bytes_billed` planned (Phase 3).
 - **Open decisions:** none — see [docs/decisions.md](docs/decisions.md).
 
 ## Project skills (slash commands)

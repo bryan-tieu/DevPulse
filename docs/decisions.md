@@ -607,6 +607,55 @@ rest correctly fall to `'Unknown'`. This is the concrete argument for a real Git
 
 ---
 
+## Day 12 — dbt build as an Airflow DAG gate (2026-07-08)
+
+### The gate is a DockerOperator on the existing dbt image — not cosmos, not BashOperator, not dbt-in-Airflow
+`dbt_build` extends the ingest DAG as a **DockerOperator** launching the same `devpulse-dbt` image the dev loop uses
+(`command="dbt build"` — the image bakes `WORKDIR`/`DBT_PROFILES_DIR` but **no entrypoint**; compose's
+`entrypoint: ["dbt"]` doesn't carry to the operator, and there's no `env_file` equivalent either, so `DBT_ENV`
+hand-mirrors everything `profiles.yml`/`_sources.yml` `env_var()` renders: `GCP_PROJECT`, `BQ_DATASET`, ADC path).
+The project mount is the DAG's **only read-write bind** (dbt writes `target/`/`logs/`); ADC stays `:ro`. One dbt,
+one version, everywhere — the Day 8 isolation decision paying out as Day 8 predicted. *Rejected:* dbt inside the
+Airflow image (the Day 8 dependency-conflict scar, with worse blast radius); `BashOperator + docker compose run`
+(same socket, worse observability — Day 7's analysis holds); **astronomer-cosmos** (per-model tasks/retries — the
+right call at scale, overkill for 9 models; named as the production step, not used).
+
+### Cadence coupling accepted: the gate rides the hourly ingest DAG
+Because `dbt build` takes no date args (the incremental fact merges from its own watermark; dims/marts rebuild in
+full), every gated run rebuilds and re-tests **all of gold** — the modeling cadence is coupled to the ingest cadence.
+Fine at 69 tests/~30 s; at scale you'd decouple: a Dataset-triggered transform DAG or cosmos with state-based
+selection. The **gate itself survives that swap unchanged** — only the trigger moves. Flagged, not fixed.
+
+### The gate's first catch was real: an unpinned manual trigger (the red path, delivered by reality)
+The plan scripted a break-a-test drill; reality pre-empted it. A manual UI trigger, unpinned, processed the *current*
+interval — and we then misread the interval's **end** (20:00) as its start: the run actually ingested hour **19**.
+The runbook already knew: `/verify-pipeline` has carried *"a manual `@hourly` trigger's data interval is the window
+ending at the logical date"* since Day 5 — **the off-by-one was documented in our own docs and we improvised instead
+of reading them.** Four layers absorbed a stray 2026-07-08 hour (164,650 rows); `dim_date` is a **static 366-day
+2024 spine**, so every stray `date_key` was an orphan → 4 `relationships` tests red → run failed. The gate turned
+"wrong data landed" into a **loud stop on its first live run**, and we watched `retries=2` re-fail identically —
+retries fix infra flakes, not data (alert-vs-retry routing is Day 13's work). **Scripted sabotage consciously
+skipped:** the organic incident satisfied the red-path criterion with stronger evidence (logged per the
+no-silent-shortcuts rule).
+
+### Cleanup forensics: merge can't un-merge, `bq rm` fails silent, and cleanup must walk every layer
+Three sharp edges banked from the cleanup. (1) **A merge can't un-merge** — deleting the stray silver partition did
+nothing to the 2026 rows the incremental fact had already absorbed; restoration required `dbt build --full-refresh`
+(drop-and-rebuild from clean source; PASS=69 and 180,386 as the proof). (2) **`bq rm -f -t` on a *nonexistent*
+partition succeeds silently** — our first delete aimed at `$2026070820` (the misread hour), removed nothing, and
+said nothing; `INFORMATION_SCHEMA.PARTITIONS` (a free metadata query) is the artifact-first check that caught it.
+(3) **Cleanup must cover every layer the lineage touched** — a GCS console sweep can't reach a BQ partition, and a
+BQ partition delete can't reach merged gold rows. Partition grain = load grain = **delete grain**.
+
+### Banked finding: `dim_date` is a static 2024 spine — correct for the project, a real defect class regardless
+The spine (366 days, generated) covers exactly the canonical year; any event from outside it becomes a referential
+orphan. For this project that's **working as intended** — the gate correctly rejects data the model doesn't cover,
+which is precisely what it did. But the failure class is real in production: a static calendar silently ages out.
+At scale: generate the spine over a rolling window anchored to the fact's date range (or extend it as part of the
+load), so calendar coverage is data-driven, not hand-frozen. Deferred — noted in CLAUDE.md known issues.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
