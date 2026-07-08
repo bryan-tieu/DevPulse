@@ -552,6 +552,61 @@ lint over a torn-down warehouse would skip those lines entirely, which is why li
 
 ---
 
+## Day 11 — Complete the gold layer: the last two marts + the enrichment seed (2026-07-07)
+
+### Language isn't in the events — enrichment via a committed dbt seed, not payload re-widening
+GH Archive event envelopes don't carry the repo's programming language, and `payload` was deliberately dropped
+from silver on Day 6 (varying shape per event type + author-email PII). So `language_momentum` had no language to
+model with. **Rejected:** re-widening silver to fish `payload.pull_request.base.repo.language` out — it re-introduces
+the exact shape-drift + PII surface we cut, for a field only *some* event types carry. **Chose:** bring language in as
+**reference data via a dbt `seed`** — `seeds/repo_languages.csv` (`repo_id → language`), *committed to git* (a seed **is**
+the data, unlike the fetched `dbt_packages/`). Seeds are the fifth dbt object type here (after source, model, test, docs),
+for small, static, owned reference data. **Explicitly a stand-in:** production sources language from a scheduled
+**GitHub repos API** job (`GET /repos/{owner}/{repo}` → `.language`) landing a `repo_metadata` source table; because the
+mart reads the seed via `ref()`, that swap never touches the mart SQL. Pinned `repo_id` to **INT64** via a
+`seeds: column_types` config (BQ infers seed types from the CSV, and a string key would silently fail the join).
+
+### The lean fact carries no natural key — enrichment routes through dim_repo
+Day 10's `fact_events` is deliberately lean: it holds `repo_sk` (the md5 surrogate), **not** the natural `repo_id`. The
+seed is keyed on `repo_id` (what an external enrichment source knows). So `language_momentum` can't join the seed
+directly — it **re-joins `dim_repo`** (`fact.repo_sk → dim_repo.repo_sk`, recovering `repo_id`), then joins the seed on
+`repo_id`. The fact→dim_repo join is safe (Day-10's `relationships` test proved every `repo_sk` matches a dim row), so it
+drops nothing. This is the honest consequence of a lean fact: enriching by a natural key means re-joining the dimension
+that holds it. (Corrected the Day-11 plan's Step 2 sketch, which had assumed the fact carried `repo_id`.)
+
+### LEFT join + COALESCE('Unknown'), never INNER — no silent drops
+The seed is *partial* (4 real repos over one hour). An **INNER** join to a partial reference table would silently delete
+every event whose repo isn't seeded — over this hour ~99% of them — corrupting the totals into "only the languages we
+happened to seed." **LEFT + `COALESCE(language,'Unknown')`** keeps every event and surfaces the coverage gap as a visible
+`'Unknown'` bucket — the "never drop silently" rule applied at the join. Proven by reconciliation: `SUM(event_count)` =
+**180,386** (= fact `COUNT(*)`), and `active_repos` sums to **55,245** (= the `dim_repo` grain) — every event and every
+repo accounted for (4 seeded repos matched, 178,081 events `Unknown`).
+
+### "What counts as a contribution" — an event-type allowlist, counted flat
+A leaderboard of *contributors* shouldn't count a `WatchEvent` (starring) or `ForkEvent`. `contributor_leaderboard`
+filters the fact to a **contribution event-type allowlist** — `PushEvent`, `PullRequestEvent`, `IssuesEvent`,
+`PullRequestReviewEvent`, `PullRequestReviewCommentEvent`, `IssueCommentEvent`, `CommitCommentEvent`, `CreateEvent`.
+**Flat count** (each allowed event = 1): a merged PR weighs the same as a single comment. **Deferred refinement:** real
+leaderboards *weight* contributions (a `CASE` assigning points per type) — noted, not built (business-rule tuning, not an
+engineering gap). Reconciled: `SUM(contributions)` = **163,953** = fact filtered to the allowlist; the filter excluded
+**16,433** non-contribution events (Watch/Fork/etc.), confirming it does real work.
+
+### Momentum is degenerate over one hour — the shape, not a trend
+`language_momentum` computes period-over-period momentum via `lag(event_count) OVER (PARTITION BY language ORDER BY
+date_key)`. Over a single ingested hour there is only one `date_key`, so `lag()` is **NULL** — `momentum_delta` is
+all-NULL and is deliberately **not** tested `not_null`. The window-function *shape* is exercised, not a real trend; it
+comes alive once the backfill spans multiple days. (Same honesty as `trending_repos_daily`'s "daily" caveat.)
+
+### Banked finding: the single-hour firehose is dominated by bots — the argument for API enrichment
+Pulling the hour's top repos to seed real matches surfaced a real-world truth: the top of the GH Archive firehose is
+**automation/bot repos** with opaque names (`dim12512a/Repo6`, `appref5555ix63/Repo3`, `autocommit`, `backup`). You
+can't tell their language from the name, and guessing would fabricate data — so only 4 recognizable repos got seeded
+(squiggle→TypeScript, aws-blue-green-toolkit→TypeScript, HGT-JSON-Server→JavaScript, moonbuck.github.io→HTML) and the
+rest correctly fall to `'Unknown'`. This is the concrete argument for a real GitHub-API enrichment source (authoritative
+`.language`) over a hand-authored file — not a gap in the build, but the honest reason the seed is a stand-in.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
