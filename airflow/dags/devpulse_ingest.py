@@ -31,6 +31,16 @@ SPARK_ENV = {
     "SILVER_BUCKET": os.environ["SILVER_BUCKET"],
 }
 
+# Environment the dbt container needs (mirrors dbt/docker-compose.yaml's
+# environment: block AND its env_file — the operator has no env_file equivalent,
+# so everything profiles.yml/_sources.yml env_var() renders must be listed here).
+DBT_ENV = {
+    "GOOGLE_APPLICATION_CREDENTIALS": "/opt/dbt/gcp/adc.json",
+    "GCP_PROJECT": os.environ["GCP_PROJECT"],
+    "GOOGLE_CLOUD_PROJECT": os.environ["GCP_PROJECT"],
+    "BQ_DATASET": os.environ["BQ_DATASET"],
+}
+
 default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
@@ -55,7 +65,10 @@ def _load_silver(**context) -> str:
 
 with DAG(
     dag_id="devpulse_ingest",
-    description="Ingest a GH Archive hour to bronze, Spark-transform to silver, load to BigQuery",
+    description=(
+        "Ingest a GH Archive hour to bronze, Spark-transform to silver, load to "
+        "BigQuery, then gate with dbt build (models + tests fail the run on bad data)"
+    ),
     schedule="@hourly",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
@@ -66,7 +79,7 @@ with DAG(
     # driver, so a couple concurrent is fine; that's an operational, not a
     # correctness, limit.)
     default_args=default_args,
-    tags=["devpulse", "phase1"],
+    tags=["devpulse", "phase1", "phase2"],
 ) as dag:
 
     wait_for_archive = PythonSensor(
@@ -113,4 +126,36 @@ with DAG(
         python_callable=_load_silver,
     )
 
-    wait_for_archive >> ingest >> silver_transform >> load_silver_task
+    # The quality gate: a failing dbt test fails this task and the whole run.
+    # retries=2 (inherited) is safe only because the build is idempotent (fact =
+    # merge on unique_key; dims/marts = full replace) — retries exist for infra
+    # flakes; they can't fix bad data (alerting for that is Day 13).
+    dbt_build = DockerOperator(
+        task_id="dbt_build",
+        image="devpulse-dbt",
+        # Bare `dbt` (on PATH in the image, which bakes no ENTRYPOINT — compose's
+        # entrypoint doesn't carry here). No date args, unlike Spark: the build is
+        # self-describing — the incremental fact merges from its own watermark.
+        command="dbt build",
+        mounts=[
+            # The DAG's only read-write mount: dbt writes target/ and logs/ into
+            # the mounted project dir.
+            Mount(
+                source=f"{HOST_PROJECT_DIR}/dbt",
+                target="/opt/devpulse/dbt",
+                type="bind",
+            ),
+            Mount(
+                source=HOST_ADC,
+                target="/opt/dbt/gcp/adc.json",
+                type="bind",
+                read_only=True,
+            ),
+        ],
+        environment=DBT_ENV,
+        docker_url="unix://var/run/docker.sock",
+        auto_remove="success",
+        mount_tmp_dir=False,
+    )
+
+    wait_for_archive >> ingest >> silver_transform >> load_silver_task >> dbt_build
