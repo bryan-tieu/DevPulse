@@ -4,19 +4,17 @@ These exercise `transform_events` on a tiny in-memory DataFrame — no GCS, no
 bronze read, no write. That's only possible because the transform is a pure
 DataFrame->DataFrame function with the I/O kept out in `run()`.
 """
+
 import datetime
 
 import pytest
 from pyspark.sql import SparkSession
-
 from silver_events import SCHEMA, transform_events
 
 
 @pytest.fixture(scope="session")
 def spark():
-    session = (
-        SparkSession.builder.master("local[1]").appName("silver-tests").getOrCreate()
-    )
+    session = SparkSession.builder.master("local[1]").appName("silver-tests").getOrCreate()
     yield session
     session.stop()
 
@@ -47,8 +45,8 @@ def test_flatten_cast_and_partition_columns(spark):
     rows = {r["event_id"]: r for r in transform_events(raw).collect()}
 
     good = rows["2"]
-    assert good["actor_login"] == "bob"          # nested actor.login flattened
-    assert good["repo_name"] == "c/d"            # nested repo.name flattened
+    assert good["actor_login"] == "bob"  # nested actor.login flattened
+    assert good["repo_name"] == "c/d"  # nested repo.name flattened
     assert good["event_date"] == datetime.date(2024, 1, 1)  # derived from created_at
     assert good["event_hour"] == 15
 

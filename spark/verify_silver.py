@@ -1,6 +1,7 @@
 """Read the silver Parquet for one hour back and print reconciliation stats:
 total rows, distinct event_ids (must equal total → dedupe worked), and the
 per-event-type breakdown."""
+
 import os
 import sys
 
