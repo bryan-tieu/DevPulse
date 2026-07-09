@@ -26,3 +26,9 @@ dbt/profiles.yml
 dbt/.user.yml
 # warm-up drill scratch files (progress log is docs/warmups.md, committed)
 warmups/
+
+# great expectations: scratch/results stay out; declarative suite JSON goes IN
+# (the un-ignore is needed because *.json is globally ignored above — without
+# it the expectation suites would silently never be tracked)
+quality/gx/uncommitted/
+!quality/gx/**/*.json

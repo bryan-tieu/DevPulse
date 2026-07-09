@@ -1,0 +1,26 @@
+services:
+  quality:
+    build: .
+    image: devpulse-quality
+    environment:
+      # Keyless auth: gcsfs resolves ADC via this env var → the mounted file.
+      # Same ADC every other stack uses; no SA key minted.
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/quality/gcp/adc.json
+      GOOGLE_CLOUD_PROJECT: devpulse-dp2622
+
+    env_file:
+      - ../.env                                   # GCP_PROJECT / bucket names
+
+    volumes:
+      - ../quality:/opt/devpulse/quality          # GE project (read-write: GE writes results under gx/)
+      - type: bind
+        source: ${APPDATA}/gcloud/application_default_credentials.json
+        target: /opt/quality/gcp/adc.json
+        read_only: true                           # never bake a credential in
+
+    working_dir: /opt/devpulse/quality
+
+    # No entrypoint on purpose: runs are
+    #   docker compose -f quality/docker-compose.yaml run --rm quality python validate_silver.py <date> <hour>
+    # — the same full command the DockerOperator will use (compose entrypoints
+    # don't carry to the operator; the Day 12 trap, avoided by never relying on one).
