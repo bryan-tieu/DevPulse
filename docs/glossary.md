@@ -172,7 +172,7 @@
 
 **Mart** — A gold model shaped for a specific business question / consumer (`trending_repos_daily`, `language_momentum`, `contributor_leaderboard`). What the API and dashboard read. (Deferred to after the fact.)
 
-**dbt tests** — Assertions that gate the build. **Generic** tests: `not_null`, `unique`, `accepted_values` (value in a known set), `relationships` (a FK matches a dim's PK). `dbt build` runs models **and** their tests in DAG order, failing loudly. `accepted_values` on `event_type` encodes the expected domain — an unknown type fails the build.
+**dbt tests** — Assertions that gate the build. Mechanically, every test is a **counterexample query**: dbt compiles the YAML to a SELECT returning *violating rows* (visible under `target/compiled/`), and **0 rows = pass**. The five shapes used here: `not_null` (`WHERE col IS NULL`), `unique` (`GROUP BY…HAVING COUNT(*)>1`), `accepted_values` (`DISTINCT col NOT IN (list)`), `relationships` (**left-anti-join** — child key with no parent row; skips NULLs, hence the paired `not_null`), and `dbt_utils.unique_combination_of_columns` (pair-wise grain guard). All are **row-level** — aggregate invariants (mart `SUM` = fact `COUNT`) need singular tests and are currently manual (`/verify-pipeline`). `dbt build` interleaves tests with models in DAG order, failing loudly. `accepted_values` on `event_type` encodes the expected domain — an unknown type fails the build.
 
 **`dbt build` vs. `dbt run`** — `run` builds models only; **`build`** interleaves models **and** tests (and seeds/snapshots) in dependency order — so a broken upstream fails its test before anything builds on top. DevPulse always uses `build`.
 

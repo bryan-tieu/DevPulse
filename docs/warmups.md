@@ -19,3 +19,4 @@
 **"Solved for me — revisit" queue** (level-4 handouts from build days land here as extra drill targets):
 
 - 2026-07-08 (Day 12): DockerOperator `command=` for the dbt gate — handed the line (`dbt build`) at hint level 3/4 after two conceptual hints didn't land. Drill target: what `command`/`entrypoint`/`Mount(target=)` each mean (what-process-runs vs where-files-appear); folds into ladder item 5 (Airflow DAG).
+  - **Same-day revisit (2026-07-08 evening): 🔶.** `command` reproduced cold ✅ (queue item cleared); concepts held (RW-vs-ro per mount, host-vs-container path roles, all 3 DooD args). Misses: both `Mount(target=)` missing the leading `/` (must be absolute), `HOST_ADC` treated as a dir (it's the *file* path — appending to it triggers the silent empty-dir mount), `DBT_ENV` contents + chain line omitted. Item-5 focus: **path mechanics** — absolute targets, file-vs-dir mount sources.
