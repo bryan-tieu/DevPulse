@@ -1,0 +1,22 @@
+{
+  "data": {
+    "asset": {
+      "id": "412ba3af-a656-45db-a8e5-f2129a46bf90",
+      "name": "silver_dataframe_asset"
+    },
+    "batch_definition": {
+      "id": "5b4473b4-8f38-4b14-af53-2a9a1a40b0f2",
+      "name": "silver_batch_definition"
+    },
+    "datasource": {
+      "id": "898e9fce-db02-4e48-9fbf-59f5fafe3726",
+      "name": "silver_parquet"
+    }
+  },
+  "id": "8fa59eb0-73ff-434c-8ba2-2a5e6c81b8c0",
+  "name": "silver_validation_definition",
+  "suite": {
+    "id": "913cff08-8966-4ff7-8ea6-b1795f334b3a",
+    "name": "devpulse_expectation_suite"
+  }
+}

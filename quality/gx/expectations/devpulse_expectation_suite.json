@@ -1,0 +1,94 @@
+{
+  "expectations": [
+    {
+      "id": "b76efb5f-d4ea-4c7f-96e2-5fea122811e3",
+      "kwargs": {
+        "column_set": [
+          "event_id",
+          "event_type",
+          "actor_id",
+          "actor_login",
+          "repo_id",
+          "repo_name",
+          "public",
+          "created_at"
+        ]
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_table_columns_to_match_set"
+    },
+    {
+      "id": "497613f4-1877-4251-90a0-a39de035fe72",
+      "kwargs": {
+        "column": "event_type"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "5dae967e-b3bf-4565-ab31-55cf693baf47",
+      "kwargs": {
+        "column": "event_id"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "c30d47a4-24c1-4fae-b8ba-ea1a62bc8139",
+      "kwargs": {
+        "column": "created_at"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "50b1ed47-31c8-4b05-96f2-28ad4f715f89",
+      "kwargs": {
+        "column": "actor_id",
+        "mostly": 0.9999
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "4bb80e7d-bb57-41a7-bced-36596078809f",
+      "kwargs": {
+        "column": "repo_id",
+        "mostly": 0.9999
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "a7b3a636-d436-4d7b-b04a-594bbdd31870",
+      "kwargs": {
+        "column": "event_id"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_be_unique"
+    },
+    {
+      "id": "6ebf5bb7-c8f6-4142-8ec0-d3a443789df1",
+      "kwargs": {
+        "max_value": 900000,
+        "min_value": 50000
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_table_row_count_to_be_between"
+    }
+  ],
+  "id": "913cff08-8966-4ff7-8ea6-b1795f334b3a",
+  "meta": {
+    "great_expectations_version": "1.18.2"
+  },
+  "name": "devpulse_expectation_suite",
+  "notes": null
+}
