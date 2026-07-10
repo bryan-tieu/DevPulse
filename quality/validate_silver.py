@@ -72,7 +72,12 @@ def count_quarantine() -> int:
     # The count is global because there's no created_at that points
     # to a specific hour
     try:
-        df = pd.read_parquet(f"gs://{SILVER_BUCKET}/events/event_date=__HIVE_DEFAULT_PARTITION__/")
+
+        # partitioning set to None. Partition discovery tries to infer a type from event_hour
+        # but since it's a null marker, throws an exception and exits.
+        df = pd.read_parquet(
+            f"gs://{SILVER_BUCKET}/events/event_date=__HIVE_DEFAULT_PARTITION__/", partitioning=None
+        )
     except FileNotFoundError:
         return 0
 
@@ -81,14 +86,15 @@ def count_quarantine() -> int:
 
 def count_raw(date: str, hour: int) -> int:
 
-    with fsspec.open(
-        f"gs://{BRONZE_BUCKET}/date={date}/hour={hour:02d}/{date}-{hour}.json.gz",
+    count = 0
+    with fsspec.open_files(
+        f"gs://{BRONZE_BUCKET}/date={date}/hour={hour:02d}/*.json.gz",
         mode="rt",
         compression="gzip",
-    ) as bronze_stream:
-        count = 0
-        for line in bronze_stream:
-            count += 1
+    ) as files:
+        for f in files:
+            for _ in f:
+                count += 1
 
     return count
 
@@ -99,10 +105,17 @@ def main(date: str, hour: int) -> int:
 
     # Residual Variables
     raw_rows = count_raw(date, hour)
+
     quarantine = count_quarantine()
+    quarantine_ok = quarantine == 0
+    print(f"Quarantine {'PASSED' if quarantine_ok else 'FAILED'}")
+
     hour_rows = len(df)
     threshold = 0.0001
+
     residual = compute_residual(raw_rows, hour_rows, quarantine)
+    res_ok = residual_ok(residual, raw_rows, threshold)
+    print(f"Residual {'PASSED' if res_ok else 'FAILED'}")
 
     print(f"raw={raw_rows}, hour={hour_rows}, quarantine={quarantine}, residual={residual}")
 
@@ -144,12 +157,14 @@ def main(date: str, hour: int) -> int:
         )
 
     result = validation_definition.run(batch_parameters={"dataframe": df})
-    print(f"Validation {'PASSED' if result.success else 'FAILED'}")
-    return (
-        0
-        if (result.success and quarantine == 0 and residual_ok(residual, raw_rows, threshold))
-        else 1
-    )
+
+    ge_ok = result.success
+    print(f"GE {'PASSED' if ge_ok else 'FAILED'}")
+
+    pipeline_ok = ge_ok and res_ok and quarantine_ok
+    print(f"Pipeline {'PASSED' if pipeline_ok else 'FAILED'}")
+
+    return 0 if pipeline_ok else 1
 
 
 if __name__ == "__main__":
