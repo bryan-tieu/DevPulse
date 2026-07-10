@@ -5,7 +5,7 @@ description: Run an interview-prep quiz over what has been built in DevPulse so 
 
 # Quiz: interview-prep over the real project
 
-The goal is retrieval practice: Bryan must be able to *produce* explanations of his own project under interview pressure, not just recognize them. Source material = `docs/decisions.md`, `docs/glossary.md`, `docs/history.md`, and the code itself.
+The goal is retrieval practice: Bryan must be able to *produce* explanations of his own project under interview pressure, not just recognize them. Source material = `docs/decisions.md`, `docs/glossary.md`, `docs/history.md`, `docs/tradeoffs.md` (the steelmen — every tradeoff question should demand *both* directions), and the code itself.
 
 ## Session shape
 

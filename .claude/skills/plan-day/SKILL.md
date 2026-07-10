@@ -22,7 +22,7 @@ The day plans are the engine of this project: each is a self-contained lesson + 
 >
 > **Scope call (read first):** exactly what is IN and what is deliberately OUT/deferred to which day.
 >
-> **<The day's central decision>, stated up front and honestly:** the pattern being taught, the alternative(s) rejected and why, and the production-vs-simplified line.
+> **<The day's central decision>, stated up front and honestly:** the pattern being taught, the alternative(s) rejected and why, **one sentence on when each rejected alternative would win** (the steelman — feeds docs/tradeoffs.md), and the production-vs-simplified line.
 
 ## Environment notes (Windows 10 · PowerShell · Docker Desktop)
 What carries from the previous day; auth posture (keyless ADC, no SA key); which stacks/images are needed; the rehydrate reminder (terraform destroy emptied everything → /start-session chain before anything reads data); any new tool introduced today and its one-paragraph orientation.
