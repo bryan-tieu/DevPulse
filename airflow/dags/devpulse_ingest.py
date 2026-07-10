@@ -41,6 +41,14 @@ DBT_ENV = {
     "BQ_DATASET": os.environ["BQ_DATASET"],
 }
 
+QUALITY_ENV = {
+    "GOOGLE_APPLICATION_CREDENTIALS": "/opt/quality/gcp/adc.json",
+    "GCP_PROJECT": os.environ["GCP_PROJECT"],
+    "GOOGLE_CLOUD_PROJECT": os.environ["GCP_PROJECT"],
+    "SILVER_BUCKET": os.environ["SILVER_BUCKET"],
+    "BRONZE_BUCKET": os.environ["BRONZE_BUCKET"],
+}
+
 default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
@@ -121,6 +129,30 @@ with DAG(
         mount_tmp_dir=False,
     )
 
+    validate_silver = DockerOperator(
+        task_id="validate_silver",
+        image="devpulse-quality",
+        command=(
+            "python validate_silver.py "
+            "{{ data_interval_start.strftime('%Y-%m-%d') }} "
+            "{{ data_interval_start.hour }}"
+        ),
+        mounts=[
+            Mount(
+                source=f"{HOST_PROJECT_DIR}/quality",
+                target="/opt/devpulse/quality",
+                type="bind",
+                # Every run results in a write of validation results
+                # so RW
+            ),
+            Mount(source=HOST_ADC, target="/opt/quality/gcp/adc.json", type="bind", read_only=True),
+        ],
+        environment=QUALITY_ENV,
+        docker_url="unix://var/run/docker.sock",
+        auto_remove="success",
+        mount_tmp_dir=False,
+    )
+
     load_silver_task = PythonOperator(
         task_id="load_silver",
         python_callable=_load_silver,
@@ -158,4 +190,11 @@ with DAG(
         mount_tmp_dir=False,
     )
 
-    wait_for_archive >> ingest >> silver_transform >> load_silver_task >> dbt_build
+    (
+        wait_for_archive
+        >> ingest
+        >> silver_transform
+        >> validate_silver
+        >> load_silver_task
+        >> dbt_build
+    )
