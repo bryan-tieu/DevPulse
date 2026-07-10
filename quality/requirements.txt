@@ -6,3 +6,7 @@ great-expectations==1.18.2
 pandas==2.3.3
 pyarrow==24.0.0
 gcsfs==2026.7.0
+# fsspec arrives with gcsfs anyway (gcsfs==2026.7.0 pins exactly this version);
+# declared explicitly since validate_silver.py imports it directly — direct deps
+# get declared, not inherited
+fsspec==2026.6.0

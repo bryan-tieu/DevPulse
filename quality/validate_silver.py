@@ -1,10 +1,13 @@
 import os
 import sys
 
+import fsspec
 import great_expectations as gx
 import pandas as pd
+from checks import compute_residual, residual_ok
 from great_expectations.exceptions import DataContextError
 
+BRONZE_BUCKET = os.environ["BRONZE_BUCKET"]
 SILVER_BUCKET = os.environ["SILVER_BUCKET"]
 EXPECTED_COLUMNS = [
     "event_id",
@@ -61,9 +64,47 @@ def build_suite() -> gx.ExpectationSuite:
     return suite
 
 
+def count_quarantine() -> int:
+
+    # If we only ran clean runs, no data ever gets sent to quarantine
+    # Check to see if the HIVE_DEFAULT_PARTITION exists
+    # If it doesn't then there aren't any bad rows
+    # The count is global because there's no created_at that points
+    # to a specific hour
+    try:
+        df = pd.read_parquet(f"gs://{SILVER_BUCKET}/events/event_date=__HIVE_DEFAULT_PARTITION__/")
+    except FileNotFoundError:
+        return 0
+
+    return len(df)
+
+
+def count_raw(date: str, hour: int) -> int:
+
+    with fsspec.open(
+        f"gs://{BRONZE_BUCKET}/date={date}/hour={hour:02d}/{date}-{hour}.json.gz",
+        mode="rt",
+        compression="gzip",
+    ) as bronze_stream:
+        count = 0
+        for line in bronze_stream:
+            count += 1
+
+    return count
+
+
 def main(date: str, hour: int) -> int:
+
     df = read_hour(date, hour)
-    print(f"Read {len(df)} rows")
+
+    # Residual Variables
+    raw_rows = count_raw(date, hour)
+    quarantine = count_quarantine()
+    hour_rows = len(df)
+    threshold = 0.0001
+    residual = compute_residual(raw_rows, hour_rows, quarantine)
+
+    print(f"raw={raw_rows}, hour={hour_rows}, quarantine={quarantine}, residual={residual}")
 
     context = gx.get_context(mode="file")
 
@@ -104,7 +145,11 @@ def main(date: str, hour: int) -> int:
 
     result = validation_definition.run(batch_parameters={"dataframe": df})
     print(f"Validation {'PASSED' if result.success else 'FAILED'}")
-    return 0 if result.success else 1
+    return (
+        0
+        if (result.success and quarantine == 0 and residual_ok(residual, raw_rows, threshold))
+        else 1
+    )
 
 
 if __name__ == "__main__":
