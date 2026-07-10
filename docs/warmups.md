@@ -7,7 +7,7 @@
 | # | Component | Status | Attempts (date · grade · note) |
 |---|---|---|---|
 | 1 | `bronze_key` + `ingest_hour` (idempotent GCS ingestion) | 🔶 | 2026-07-08 · 🔶 · structure + idempotency check solid; misses: `hour:02d` zero-pad in partition key, `timeout=` on `requests.get`; L3 hint for the GCS upload method (caps grade). Repeat in ~1 week; focus: key formatting = identity, bounded I/O. |
-| 2 | `_hour_partition` + `load_silver` (BQ load job + decorator) | ⬜ | |
+| 2 | `_hour_partition` + `load_silver` (BQ load job + decorator) | 🔁 | 2026-07-09 · 🔁 · helper nailed cold (incl. pad asymmetry — the tested part); skeleton + job-config knobs right. Blocked: file never parsed (5 typos — run `py_compile` early), schema fields w/o types + `public` missing, `$` written as `/`, table id unqualified, `ensure_table` missing HOUR partitioning (decorator+partitioning = one mechanism), no `job.result()` (async fail-silent). L2 shape hint used. Repeat in a few days; focus: execute-as-you-go, the two halves of partition idempotency. |
 | 3 | Spark `SCHEMA` + `transform_events` (flatten/dedupe/cast) | ⬜ | |
 | 4 | Spark `run()` + session config (dynamic overwrite) | ⬜ | |
 | 5 | Airflow DAG (sensor, interval math, chain, retries) | ⬜ | |

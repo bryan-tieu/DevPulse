@@ -51,15 +51,15 @@ Execute in order; one small commit per step. Steps 0, 5 and 6 are setup/verify/d
 - 📦 **Four commits, imperative mood:** `add great expectations quality stack` · `add silver expectation suite and runner` · `add counted quarantine reconciliation check` · `add GE validate_silver gate to devpulse_ingest` · plus the docs commit. Fixture and sabotage never land in git.
 
 ## Done criteria
-- [ ] `quality/` stack exists: `devpulse-quality` image builds with pinned GE 1.x; ADC `:ro`; smoke run prints the GE version in-container.
-- [ ] Suite green on the canonical hour in-container: 8-column schema match, null/unique checks pass, observed rows **180,386**.
-- [ ] Counted checks green: quarantine **0**, raw **180,387**, residual **1** (the known dupe) within threshold; host pytest green on the pure logic.
-- [ ] `validate_silver` wired between `silver_transform` and `load_silver`; DAG parses with zero import errors; pinned run → **6 tasks green**, counts in the task log, `dbt_build` ends **PASS=69 WARN=0 ERROR=0**.
-- [ ] **Red path proven:** planted malformed row → quarantine count 1 → `validate_silver` red, run failed, `load_silver`/`dbt_build` never ran, BQ partition untouched; cleanup (fixture + `__HIVE_DEFAULT_PARTITION__` delete) → re-run green, **180,386** restored.
-- [ ] Reconciliation holds post-gate: silver **180,386** = `language_momentum` SUM; `contributor_leaderboard` SUM = **163,953**; re-trigger idempotent.
-- [ ] `ruff check .` + `black --check .` + `python -m pytest tests/` clean; no credentials or GE scratch dirs tracked.
-- [ ] `decisions.md` (≥4 entries: placement, vacuity, attribution + lifecycle, engine choice), `history.md`, CLAUDE.md status updated → Next up = **Day 14: alerting + run-metadata logging**.
-- [ ] Teardown: Airflow/Spark/dbt/quality stacks down, `terraform destroy` clean (9 destroyed).
+- [x] `quality/` stack exists: `devpulse-quality` image builds with pinned GE **1.18.2**; ADC `:ro`; smoke run prints the version. *(Plus `fsspec==2026.6.0` pinned explicitly — gcsfs pins the older train; a failed build taught it.)*
+- [x] Suite green on the canonical hour in-container: 8-column schema match, null/unique checks pass, observed rows **180,386**. *(Refined during build: strict `not_null` trio + `mostly=0.9999` on actor/repo — honoring the Day 6 SCHEMA IOU Bryan spotted; bounds 50k–900k.)*
+- [x] Counted checks green: quarantine **0**, raw **180,387**, residual **1** within threshold; host pytest green (**6 tests** — added boundary, zero-raw, and identity-with-quarantine cases).
+- [x] `validate_silver` wired between `silver_transform` and `load_silver`; DAG parses clean; pinned backfill → **6 tasks green**, counts in the task log, `dbt_build` ends **PASS=69 WARN=0 ERROR=0**. *(Two identity bugs en route: image name underscore, command missing a space — both found by log forensics.)*
+- [x] **Red path proven:** planted fixture → quarantine 1 → `validate_silver` red (honest per-check log), run failed, `load_silver`/`dbt_build` **`upstream_failed`**, BQ untouched; cleanup (fixture + `__HIVE_DEFAULT_PARTITION__` delete) → green, **180,386** restored. **Bonus: the drill caught 3 real validator bugs** (`ArrowInvalid` quarantine read, log/exit-code contradiction, raw undercount vs the glob) — fixed in `a949a12`; restoration green arrived via the run's own pending retry (self-heal).
+- [x] Reconciliation holds post-gate: silver **180,386** = `language_momentum` SUM; `contributor_leaderboard` SUM = **163,953**; `trending` 7,236 = WatchEvents; grains 55,245; re-runs idempotent at every layer.
+- [x] `ruff check .` + `black --check .` + `python -m pytest tests/` clean; no credentials or GE scratch dirs tracked.
+- [x] `decisions.md` (**7 entries**), `history.md`, CLAUDE.md status updated → Next up = **Day 14: alerting + run-metadata logging**.
+- [x] Teardown: Airflow/Spark/dbt/quality stacks down, `terraform destroy` clean (9 destroyed).
 
 ## Learning goals
 1. **Every layer boundary needs its own gate** — dbt tests can only interrogate rows that reached the warehouse; data dropped *before* load is structurally invisible to them, which is why quality tooling exists at the lake boundary and not just in the modeling layer.

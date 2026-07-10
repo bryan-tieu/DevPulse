@@ -656,6 +656,80 @@ load), so calendar coverage is data-driven, not hand-frozen. Deferred — noted 
 
 ---
 
+## Day 13 — Great Expectations bronze→silver gate (2026-07-09)
+
+### The silver gate is GE in its own image, validating between transform and load
+`validate_silver` (DockerOperator, `devpulse-quality`, GE **1.18.2** pinned) sits between `silver_transform` and
+`load_silver` — **upstream of the warehouse write it protects**. Why a new tool at this seam: dbt tests structurally
+can't see rows that never load; asserts inside the Spark job entangle validation with transform and emit no standard
+artifact; Airflow's SQL check operators are post-load only. GE gives declarative suites (committed JSON) + a
+machine-readable **Validation Result** — the exact artifact Day 14's alerting and run-metadata consume. Engine honesty:
+pandas over one hour (180k rows) — at scale the *same suite* runs on GE's Spark/BQ execution engines (in-flight or
+in-warehouse); the suite is the contract, the engine is transport (rhymes with DockerOperator→K8s). Fifth per-tool
+image, Day 8 isolation rule; pandas pinned 2.3.3 (3.0 weeks old, untested by GE), and gcsfs pins `fsspec==2026.6.0`
+(a failed image build taught that "same version train" was an assumption, not a fact).
+
+### Validate what's present, count what's missing (the vacuity principle)
+`not_null(created_at)` over the hour partition is **vacuously green** — Spark already routed malformed rows to
+`__HIVE_DEFAULT_PARTITION__`, outside the batch being inspected; a gate over survivors can't see casualties.
+Formalizing the Day 6 quarantine therefore means **counting** it: quarantine expected **0**, bronze raw stream-counted
+(lines only — the payload is never parsed: PII + ~1 GB/hour), and the conservation identity
+**raw = hour_rows + quarantine + residual** (canonical: 180,387 = 180,386 + 0 + 1; residual = dedupe casualties,
+bounded as a fraction of raw, floor ≥ 0 — negative means rows from *nowhere*: double-write, not failed dedupe, which
+lands at residual 0 and is the `unique` test's jurisdiction). `quarantine == 0` is deliberately a **separate check**
+from the identity: quarantined rows are *accounted for* by the equation but *unacceptable* to the gate. Suite
+thresholds honor the Day 6 SCHEMA IOU: strict `not_null` on the contract trio, `mostly=0.9999` null-rate floor on
+`actor_id`/`repo_id`, row-count fence 50k–900k hand-set from one holiday data point (derive from the backfill
+distribution later).
+
+### GE store semantics: `add_or_update` appends — so the committed JSON is the contract, code is the bootstrap
+`suites.add_or_update(fresh_suite)` matches expectations **by id**; freshly constructed expectation objects carry new
+UUIDs, so every call *appended* a full copy (observed: 5 generations, 39 expectations in one suite). Chose
+**bootstrap-once**: `build_suite()` registers only when the store is empty; the committed `gx/expectations/*.json` is
+authoritative thereafter (editing code requires deleting the stored suite and regenerating — said in a comment at the
+function). Two supporting facts: the root `.gitignore` globally ignores `*.json`, so the contract needed an explicit
+unignore or it would silently never be tracked; and the drift this pattern risks bit us **twice within the hour it was
+documented** (a `mostly` value edited in code changed nothing at runtime). The discipline is real, not theoretical.
+
+### The quarantine can't be read the normal way — and a narrow `except` is what saved the gate
+Reading `event_date=__HIVE_DEFAULT_PARTITION__/` with default hive discovery raises `ArrowInvalid`: partition columns
+are typed from directory names, and the null marker is the only observed value — nothing to infer from. Fix:
+`partitioning=None` (a row count needs no partition columns; the quarantine is defined by broken metadata, so it must
+be read by tooling that derives nothing from metadata). The sharp edge: `except FileNotFoundError` (missing prefix =
+healthy 0) did **not** catch `ArrowInvalid` → loud crash → pipeline stopped anyway. A broad `except` would have
+swallowed it and reported `quarantine=0` — **a green gate over poisoned data**. Narrow exceptions turn unknown
+failures into stops, not false passes.
+
+### The red-path drill found three real validator bugs — none reachable from the green path
+A one-row malformed fixture (raw GH Archive field names, only `created_at` broken) planted in the bronze hour exposed:
+(1) the `ArrowInvalid` crash above — red by accident, not verdict; (2) the log printed `Validation PASSED` on a failing
+task — print and exit code derived truth *independently*; fixed by computing per-check verdict booleans once and
+letting both the log lines and the exit code consume them (the log can no longer contradict the task state); (3) `raw`
+undercounted — `count_raw` read one hardcoded blob name while Spark reads the `*.json.gz` **glob**, so the fixture
+entered the pipeline uncounted and the residual silently absorbed it. Principle: **the raw count must share the
+transform's input definition** — same glob, not an assumption about what ingest "always" writes. A gate is unproven
+until it fails; green runs structurally could not reach any of the three.
+
+### Quarantine lifecycle: the failure outlives its cause
+Deleting the malformed bronze blob did not clear the gate — the quarantined Parquet persists, and **dynamic partition
+overwrite never rewrites a partition absent from the new data** (clean runs carry no NULL partition). Rows check into
+the quarantine; no mechanism checks them out. Cleanup must visit every layer the lineage touched (Day 12's rule,
+re-proven at the bronze→silver boundary: fixture blob *and* quarantine prefix). Attribution: a NULL `created_at`
+can't be scoped to an hour — the field that would scope it is the broken one — so the count is **global** and any
+non-zero is a human investigation, not an automated skip. At scale: quarantines get an owned lifecycle (retention,
+reprocess queue, alert-on-growth) — deferred, noted in CLAUDE.md known issues.
+
+### Two operational findings: the paused flag lives in the DB, and retries finish what humans fix
+(1) The session opened with the DAG **unpaused** — `is_paused` persists in the Airflow metadata DB volume across
+`compose down`, and Day 12 ended unpaused. The scheduler immediately resumed a queued Day 12 run and scheduled the
+newest 2026 interval; both were killed mid-chain having landed bronze + one silver partition — `load_silver` never
+ran, so cleanup was two `gcloud storage rm`s vs Day 12's three-layer forensics. **The pre-load-gate economics argument,
+demonstrated by accident.** Candidate: assert-paused in `/start-session`. (2) After the drill cleanup, the failed run's
+*pending retry* fired against the cleaned buckets and completed the entire chain green, unprompted — retries can't fix
+data, but they finish the job once a human has. Both findings feed Day 14's alert-vs-retry routing.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless

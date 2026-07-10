@@ -81,7 +81,8 @@ Explanation is not skill. For any step that carries the day's lesson, **Bryan im
 | Canonical test hour | `2024-01-01 15:00` → **180,386** silver rows (180,387 raw, 1 dupe) |
 | Other canonical counts | dims 55,245 repos / 39,030 actors / 366 dates / 15 types · contributions 163,953 · dbt build **PASS=69** |
 | Source URL | `https://data.gharchive.org/YYYY-MM-DD-H.json.gz` |
-| Airflow DAG | `devpulse_ingest`: `wait_for_archive >> ingest >> silver_transform (DockerOperator) >> load_silver >> dbt_build (DockerOperator gate)` |
+| Airflow DAG | `devpulse_ingest`: `wait_for_archive >> ingest >> silver_transform (DockerOperator) >> validate_silver (GE gate, DockerOperator) >> load_silver >> dbt_build (DockerOperator gate)` |
+| GE counted checks (canonical) | quarantine **0** · raw **180,387** · residual **1** (= the dupe); suite = 8 expectations in `quality/gx/expectations/` |
 
 ## Common commands (run from repo root)
 
@@ -126,10 +127,10 @@ Full history of what each day delivered: [docs/history.md](docs/history.md).
 
 > Keep this section SHORT (≤ 15 lines). `/end-session` updates it; the narrative goes to `docs/history.md`.
 
-- **Phase:** Phase 2 back half (quality gates) — dbt gate ✅ landed; GE + alerting + run-metadata remain.
-- **Last completed:** [Day 12](docs/daily/day-12.md) (2026-07-08) — `dbt_build` DockerOperator gate in `devpulse_ingest`; green path (in-pipeline PASS=69) + an **organic red path** (unpinned trigger → stray 2026 hour → 4 `relationships` tests failed the run; cleaned via partition delete + `--full-refresh`). Reconciled 180,386 / 163,953.
-- **Next up:** [Day 13](docs/daily/day-13.md) (planned) — **Great Expectations** bronze→silver gate: `validate_silver` DockerOperator between `silver_transform` and `load_silver`; centerpiece = the malformed-`created_at` quarantine as a **counted** check (quarantine 0 / raw 180,387 / residual 1 = the dupe). Split per one-day-one-lesson: **failure alerting + run-metadata logging → Day 14**.
-- **Known issues:** none blocking. `dim_date` is a static 2024 spine — out-of-range dates correctly fail the gate, but spine generation should become data-driven (logged Day 12; revisit with the backfill). `event_counts.py` + `hourly_event_counts` deprecated-not-deleted (retire in Phase 3). Still personal ADC — pipeline-SA impersonation + silver-bucket grant on the security backlog. DockerOperator mounts the Docker socket (host-root; accepted for local dev — at scale: KubernetesPodOperator/Dataproc). BQ daily byte quota not adjustable → per-query `maximum_bytes_billed` planned (Phase 3).
+- **Phase:** Phase 2 back half (quality gates) — dbt gate ✅ + GE silver gate ✅; alerting + run-metadata (Day 14) remain.
+- **Last completed:** [Day 13](docs/daily/day-13.md) (2026-07-09) — `validate_silver` DockerOperator (GE 1.18, new `quality/` stack) between `silver_transform` and `load_silver`: 8-expectation suite + **counted quarantine/reconciliation identity** (180,387 = 180,386 + 0 + 1). Green 6-task chain; **scripted red path** (fixture → gate red, BQ untouched) surfaced 3 validator bugs, fixed; quarantine lifecycle = manual delete (dynamic overwrite can't clean it). Reconciled 180,386 / 163,953 / PASS=69.
+- **Next up:** Day 14 — **failure alerting** (alert-vs-retry routing) + **run-metadata logging**, both consuming the GE Validation Result artifact. Run `/plan-day` first.
+- **Known issues:** none blocking. GE suite: the **committed JSON is authoritative**, `build_suite()` is bootstrap-only (edit → delete stored suite → regenerate; `suites.add_or_update` appends, Day 13). Quarantine cleanup is **manual** until lifecycle work. Airflow **paused flag persists in the metadata DB** across sessions (Day 13 strays; consider assert-paused in `/start-session`). `dim_date` static 2024 spine (revisit with backfill). `event_counts.py` deprecated-not-deleted (Phase 3). Personal ADC — pipeline-SA impersonation on the security backlog. Docker-socket DooD accepted for local dev. Per-query `maximum_bytes_billed` planned (Phase 3).
 - **Open decisions:** none — see [docs/decisions.md](docs/decisions.md).
 
 ## Project skills (slash commands)
