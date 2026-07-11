@@ -22,5 +22,6 @@ except ImportError:
 _ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, _ROOT)  # repo root: config, transform.* importable
 sys.path.insert(0, os.path.join(_ROOT, "spark"))  # spark job modules
+sys.path.insert(0, os.path.join(_ROOT, "airflow/dags"))
 
 collect_ignore = [] if _HAS_PYSPARK else ["test_silver_events.py"]
