@@ -32,3 +32,4 @@ warmups/
 # it the expectation suites would silently never be tracked)
 quality/gx/uncommitted/
 !quality/gx/**/*.json
+quality/run_summary.json

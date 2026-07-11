@@ -1,6 +1,8 @@
 import os
 import sys
-
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 import fsspec
 import great_expectations as gx
 import pandas as pd
@@ -20,6 +22,35 @@ EXPECTED_COLUMNS = [
     "created_at",
 ]
 
+def build_summary_json(
+    raw_rows: int,
+    hour_rows: int, 
+    quarantine_rows: int,
+    residual_rows: int,
+    quarantine_ok: bool,
+    res_ok: bool,
+    ge_ok: bool,
+    pipeline_ok: bool,
+    date: str,
+    hour: int,
+    timestamp: str = None
+):
+    timestamp = timestamp or datetime.now(timezone.utc)
+    return {
+        "run_summary": {
+            "raw": raw_rows,
+            "hour": hour_rows,
+            "quarantine_rows": quarantine_rows,
+            "residual_rows": residual_rows,
+            "quarantine_check": quarantine_ok,
+            "residual_check": res_ok,
+            "great_expectations_suite_check": ge_ok,
+            "pipeline_check": pipeline_ok,
+            "partition_date": date,
+            "partition_hour": hour,
+            "timestamp": timestamp.isoformat()
+        }
+    }
 
 def read_hour(date: str, hour: int) -> pd.DataFrame:
     df = pd.read_parquet(f"gs://{SILVER_BUCKET}/events/event_date={date}/event_hour={hour}/")
@@ -100,7 +131,7 @@ def count_raw(date: str, hour: int) -> int:
 
 
 def main(date: str, hour: int) -> int:
-
+    
     df = read_hour(date, hour)
 
     # Residual Variables
@@ -148,8 +179,11 @@ def main(date: str, hour: int) -> int:
 
     try:
         validation_definition = context.validation_definitions.get("silver_validation_definition")
+        
     except DataContextError:
+        
         print("silver_validation_definition doesn't exist")
+        
         validation_definition = context.validation_definitions.add_or_update(
             gx.ValidationDefinition(
                 name="silver_validation_definition", data=batch_definition, suite=suite
@@ -164,6 +198,23 @@ def main(date: str, hour: int) -> int:
     pipeline_ok = ge_ok and res_ok and quarantine_ok
     print(f"Pipeline {'PASSED' if pipeline_ok else 'FAILED'}")
 
+    run_summary_json = build_summary_json(
+        raw_rows,
+        hour_rows,
+        quarantine,
+        residual,
+        quarantine_ok,
+        res_ok,
+        ge_ok,
+        pipeline_ok,
+        date,
+        hour,
+    )
+    
+    path_anchor = Path(__file__).parent / "run_summary.json"
+    with path_anchor.open("w", encoding="utf-8") as file:
+        json.dump(run_summary_json, file, indent=4)
+    
     return 0 if pipeline_ok else 1
 
 
