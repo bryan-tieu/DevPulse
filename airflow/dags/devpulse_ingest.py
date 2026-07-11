@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pendulum
 import requests
@@ -13,6 +14,7 @@ from docker.types import Mount
 
 from airflow import DAG
 from ingestion.ingest import GH_ARCHIVE_URL, ingest_hour
+from transform.load_pipeline_metadata import load_pipeline_metadata, summary_is_fresh
 from transform.load_silver import load_silver
 
 # Host paths for the Docker-out-of-docker mounts. DockerOperator launches a
@@ -74,6 +76,59 @@ def _ingest(**context) -> str:
 def _load_silver(**context) -> str:
     di = context["data_interval_start"]
     return load_silver(di.strftime("%Y-%m-%d"), di.hour)
+
+
+def _load_pipeline_metadata(**context) -> str:
+    dag_run = context["dag_run"]
+
+    run_id = dag_run.run_id
+    recorded_at = datetime.now(timezone.utc).isoformat()
+    logical_date = dag_run.logical_date.isoformat()
+
+    path = "/opt/devpulse/quality/run_summary.json"
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            json_output = json.load(file)
+            run_summary = json_output["run_summary"]
+
+            fresh_summary_check = summary_is_fresh(
+                run_summary, dag_run.start_date, dag_run.logical_date
+            )
+
+            if fresh_summary_check:
+                raw_rows = run_summary["raw"]
+                hour_rows = run_summary["hour"]
+                quarantine_rows = run_summary["quarantine_rows"]
+                residual_rows = run_summary["residual_rows"]
+            else:
+                print("run_summary.json stale. Assigning NULL to run_summary and its counts")
+                run_summary = None
+                raw_rows = None
+                hour_rows = None
+                quarantine_rows = None
+                residual_rows = None
+
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        print("run_summary.json not found. Assigning NULL to run_summary and its counts")
+        run_summary = None
+        raw_rows = None
+        hour_rows = None
+        quarantine_rows = None
+        residual_rows = None
+
+    task_instances = dag_run.get_task_instances()
+
+    return load_pipeline_metadata(
+        run_id,
+        recorded_at,
+        logical_date,
+        run_summary,
+        raw_rows,
+        hour_rows,
+        quarantine_rows,
+        residual_rows,
+        task_instances,
+    )
 
 
 with DAG(
@@ -151,11 +206,7 @@ with DAG(
                 # Every run results in a write of validation results
                 # so RW
             ),
-            Mount(
-                source=HOST_ADC, 
-                target="/opt/quality/gcp/adc.json", 
-                type="bind", read_only=True
-            ),
+            Mount(source=HOST_ADC, target="/opt/quality/gcp/adc.json", type="bind", read_only=True),
         ],
         environment=QUALITY_ENV,
         docker_url="unix://var/run/docker.sock",
@@ -201,6 +252,17 @@ with DAG(
         mount_tmp_dir=False,
     )
 
+    # Takes retries=2. Same DAG run means
+    # run_id is the dedupe key for retry runs
+    record_run_metadata = PythonOperator(
+        task_id="record_run_metadata",
+        python_callable=_load_pipeline_metadata,
+        # Observer has to outlive the operator
+        # to get full run. If it dies, no metadata
+        # is ever recorded
+        trigger_rule="all_done",
+    )
+
     (
         wait_for_archive
         >> ingest
@@ -208,4 +270,5 @@ with DAG(
         >> validate_silver
         >> load_silver_task
         >> dbt_build
+        >> record_run_metadata
     )
