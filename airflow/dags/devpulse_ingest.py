@@ -8,6 +8,7 @@ import requests
 from airflow.operators.python import PythonOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sensors.python import PythonSensor
+from alerts import notify_failure
 from docker.types import Mount
 
 from airflow import DAG
@@ -52,6 +53,10 @@ QUALITY_ENV = {
 default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
+    # Airflow calls this whenever retries are used up.
+    # Flakes are caught through 2 retries.
+    # Data quality gates fail after their only attempt.
+    "on_failure_callback": notify_failure,
 }
 
 
@@ -132,6 +137,7 @@ with DAG(
     validate_silver = DockerOperator(
         task_id="validate_silver",
         image="devpulse-quality",
+        retries=0,
         command=(
             "python validate_silver.py "
             "{{ data_interval_start.strftime('%Y-%m-%d') }} "
@@ -145,7 +151,11 @@ with DAG(
                 # Every run results in a write of validation results
                 # so RW
             ),
-            Mount(source=HOST_ADC, target="/opt/quality/gcp/adc.json", type="bind", read_only=True),
+            Mount(
+                source=HOST_ADC, 
+                target="/opt/quality/gcp/adc.json", 
+                type="bind", read_only=True
+            ),
         ],
         environment=QUALITY_ENV,
         docker_url="unix://var/run/docker.sock",
@@ -158,13 +168,14 @@ with DAG(
         python_callable=_load_silver,
     )
 
-    # The quality gate: a failing dbt test fails this task and the whole run.
-    # retries=2 (inherited) is safe only because the build is idempotent (fact =
-    # merge on unique_key; dims/marts = full replace) — retries exist for infra
-    # flakes; they can't fix bad data (alerting for that is Day 13).
+    # Retries set to 0. A failing gate catches. Idempotency
+    # means that rerunning a failing gate provides the same
+    # result, in this case failing again. Save time and resources
+    # from rerunning if the result will still fail
     dbt_build = DockerOperator(
         task_id="dbt_build",
         image="devpulse-dbt",
+        retries=0,
         # Bare `dbt` (on PATH in the image, which bakes no ENTRYPOINT — compose's
         # entrypoint doesn't carry here). No date args, unlike Spark: the build is
         # self-describing — the incremental fact merges from its own watermark.
