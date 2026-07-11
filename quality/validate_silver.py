@@ -1,8 +1,9 @@
+import json
 import os
 import sys
-import json
 from datetime import datetime, timezone
 from pathlib import Path
+
 import fsspec
 import great_expectations as gx
 import pandas as pd
@@ -22,9 +23,10 @@ EXPECTED_COLUMNS = [
     "created_at",
 ]
 
+
 def build_summary_json(
     raw_rows: int,
-    hour_rows: int, 
+    hour_rows: int,
     quarantine_rows: int,
     residual_rows: int,
     quarantine_ok: bool,
@@ -33,7 +35,7 @@ def build_summary_json(
     pipeline_ok: bool,
     date: str,
     hour: int,
-    timestamp: str | None = None
+    timestamp: str | None = None,
 ) -> dict:
     timestamp = timestamp or datetime.now(timezone.utc).isoformat()
     return {
@@ -48,9 +50,10 @@ def build_summary_json(
             "pipeline_check": pipeline_ok,
             "partition_date": date,
             "partition_hour": hour,
-            "timestamp": timestamp
+            "timestamp": timestamp,
         }
     }
+
 
 def read_hour(date: str, hour: int) -> pd.DataFrame:
     df = pd.read_parquet(f"gs://{SILVER_BUCKET}/events/event_date={date}/event_hour={hour}/")
@@ -131,7 +134,7 @@ def count_raw(date: str, hour: int) -> int:
 
 
 def main(date: str, hour: int) -> int:
-    
+
     df = read_hour(date, hour)
 
     # Residual Variables
@@ -179,11 +182,11 @@ def main(date: str, hour: int) -> int:
 
     try:
         validation_definition = context.validation_definitions.get("silver_validation_definition")
-        
+
     except DataContextError:
-        
+
         print("silver_validation_definition doesn't exist")
-        
+
         validation_definition = context.validation_definitions.add_or_update(
             gx.ValidationDefinition(
                 name="silver_validation_definition", data=batch_definition, suite=suite
@@ -210,11 +213,11 @@ def main(date: str, hour: int) -> int:
         date,
         hour,
     )
-    
+
     path_anchor = Path(__file__).parent / "run_summary.json"
     with path_anchor.open("w", encoding="utf-8") as file:
         json.dump(run_summary_json, file, indent=4)
-    
+
     return 0 if pipeline_ok else 1
 
 
