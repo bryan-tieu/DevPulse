@@ -33,13 +33,13 @@ def build_summary_json(
     pipeline_ok: bool,
     date: str,
     hour: int,
-    timestamp: str = None
-):
-    timestamp = timestamp or datetime.now(timezone.utc)
+    timestamp: str | None = None
+) -> dict:
+    timestamp = timestamp or datetime.now(timezone.utc).isoformat()
     return {
         "run_summary": {
-            "raw": raw_rows,
-            "hour": hour_rows,
+            "raw_rows": raw_rows,
+            "hour_rows": hour_rows,
             "quarantine_rows": quarantine_rows,
             "residual_rows": residual_rows,
             "quarantine_check": quarantine_ok,
@@ -48,7 +48,7 @@ def build_summary_json(
             "pipeline_check": pipeline_ok,
             "partition_date": date,
             "partition_hour": hour,
-            "timestamp": timestamp.isoformat()
+            "timestamp": timestamp
         }
     }
 
