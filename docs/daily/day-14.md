@@ -46,10 +46,13 @@ Execute in order; one small commit per step. Steps 0 and 5–6 are setup/drill/v
 - 📦 **Four commits, imperative mood:** `add failure alert webhook callback` · `route alerts vs retries by failure class` · `emit machine-readable run summary from validator` · `add run metadata logging task` · plus the docs commit.
 
 ## Done criteria
-- [ ] `alerts.py` callback: pure payload builder + POST with timeout; pytest green on the builder; hand-fired test lands in the channel.
-- [ ] Routing live: `on_failure_callback` in `default_args`; `retries=0` on `validate_silver`/`dbt_build`, `retries=2` elsewhere; DAG parses with zero import errors.
-- [ ] `run_summary.json` emitted every validator run, gitignored, byte-consistent with the printed counts (**180,387 / 180,386 / 0 / 1** canonical); re-run overwrites.
-- [ ] `record_run_metadata` appended (`trigger_rule="all_done"`), chain = **7 tasks**; `devpulse_silver.pipeline_run_metadata` created idempotently with explicit schema; writes via free load job.
+
+> **Session 1 (2026-07-10) closed after step 4** — 5 commits landed (steps 1–4 + a black sweep); steps 5–7 (both-path proof, reconcile, docs, Phase-2-complete flip) run next session. Session finding banked in decisions.md: the metadata DB served a phantom 0.07-s baseline "success" from Day 13's stored DagRun — `--reset-dagruns` required for any pinned re-proof.
+
+- [x] `alerts.py` callback: pure payload builder + POST with timeout; pytest green on the builder; hand-fired test lands in the channel. *(Discord webhook; URL in root `.env` → `env_file` → scheduler.)*
+- [x] Routing live: `on_failure_callback` in `default_args`; `retries=0` on `validate_silver`/`dbt_build`, `retries=2` elsewhere; DAG parses with zero import errors. *(Verified in-container: `{'wait_for_archive': 2, 'ingest': 2, 'silver_transform': 2, 'validate_silver': 0, 'load_silver': 2, 'dbt_build': 0}`, callback on all.)*
+- [x] `run_summary.json` emitted every validator run, gitignored, byte-consistent with the printed counts (**180,387 / 180,386 / 0 / 1** canonical); re-run overwrites. *(Overwrite is mode-`"w"` by construction; observed re-proof rides tomorrow's green run.)*
+- [x] `record_run_metadata` appended (`trigger_rule="all_done"`), chain = **7 tasks**; `devpulse_silver.pipeline_run_metadata` created idempotently with explicit schema; writes via free load job. *(Code + parse-check done; the BQ write itself is unexercised until the green run. Beyond plan: `summary_is_fresh` happens-before + partition-match staleness guard, 7 pytests incl. schema-drift guard — test file was a hint-level-4 handout, logged in warmups.md.)*
 - [ ] **Green path:** 7 tasks green, no alert, one metadata row (composite true, PASS=69 downstream).
 - [ ] **Red path:** fixture → `validate_silver` fails on **attempt 1** (seconds-to-page vs Day 13's ~11 min — record the delta), alert received with correct ids, `load_silver`/`dbt_build` `upstream_failed`, BQ untouched, **metadata row recorded anyway**; two-layer cleanup → green restored.
 - [ ] Reconciliation holds: silver **180,386**; marts **180,386 / 163,953 / 7,236**; **PASS=69**.

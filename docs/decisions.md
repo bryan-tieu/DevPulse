@@ -728,6 +728,21 @@ demonstrated by accident.** Candidate: assert-paused in `/start-session`. (2) Af
 *pending retry* fired against the cleaned buckets and completed the entire chain green, unprompted — retries can't fix
 data, but they finish the job once a human has. Both findings feed Day 14's alert-vs-retry routing.
 
+## Day 14 · session 1 — alerting + run-metadata build (2026-07-10) — partial; full entry after step 5
+
+### The metadata DB serves phantom successes: `--reset-dagruns` for any pinned re-proof
+
+Session-start baseline: the pinned backfill (`-s = -e = 2024-01-01T15:00`) "succeeded" in **0.073 s** —
+it had found **Day 13's DagRun still in the Airflow metadata DB** (queued 03:56 UTC, the prior evening),
+re-marked it successful, and executed **zero tasks** against the freshly terraformed infra. The giveaway
+was `run_duration=0.07` and a stale `queued_at`; `--reset-dagruns -y` produced the real 6-task run (104.8 s).
+**Pattern now named (2nd member):** the Airflow metadata DB persists state that git and `terraform destroy`
+never touch — Day 13 found the *paused flag*, today it was *run history*, and a stale success is the more
+dangerous of the two because it looks exactly like the desired outcome. **Decision:** pinned re-proof runs
+always use `--reset-dagruns`; `/start-session` runbook gained an assert-paused step (step 7) the same day.
+At scale this is the argument for treating the scheduler DB as stateful infrastructure — backed up,
+migrated deliberately, never assumed empty.
+
 ---
 
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)

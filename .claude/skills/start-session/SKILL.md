@@ -30,7 +30,12 @@ Run from the repo root. Before starting, confirm with the user which parts they 
    docker compose -f dbt/docker-compose.yaml run --rm dbt build
    ```
    Expect the baseline from CLAUDE.md *Reference values* (currently **PASS=69**). A red baseline before new work means the environment, not the new work, is broken — stop and fix.
-7. **Report:** one short summary — what's up, the row count check (180,386 = canonical), and a reminder that `/end-session` handles teardown.
+7. **Airflow (only if orchestration today):** `docker compose -f airflow/docker-compose.yaml up -d`, then **assert the DAG is paused before anything else**:
+   ```
+   docker compose -f airflow/docker-compose.yaml exec -T airflow-scheduler airflow dags list --output json
+   ```
+   → `devpulse_ingest` must show `is_paused=True`. The paused flag lives in the Airflow **metadata DB**, not in git — it silently carries whatever state the last session left (Day 13's stray unpinned run processed the *current* interval and orphaned a 2026 hour against the static 2024 `dim_date` spine). If unpaused: pause it first, ask questions after. Pinned backfills (`dags backfill -s ... -e ...`) run regardless of the paused flag, so keeping it paused costs nothing.
+8. **Report:** one short summary — what's up, the row count check (180,386 = canonical), and a reminder that `/end-session` handles teardown.
 
 ## Rules
 
