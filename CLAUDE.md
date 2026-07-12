@@ -82,8 +82,10 @@ Explanation is not skill. For any step that carries the day's lesson, **Bryan im
 | Canonical test hour | `2024-01-01 15:00` → **180,386** silver rows (180,387 raw, 1 dupe) |
 | Other canonical counts | dims 55,245 repos / 39,030 actors / 366 dates / 15 types · contributions 163,953 · dbt build **PASS=69** |
 | Source URL | `https://data.gharchive.org/YYYY-MM-DD-H.json.gz` |
-| Airflow DAG | `devpulse_ingest`: `wait_for_archive >> ingest >> silver_transform (DockerOperator) >> validate_silver (GE gate, DockerOperator) >> load_silver >> dbt_build (DockerOperator gate)` |
+| Airflow DAG (7 tasks) | `devpulse_ingest`: `wait_for_archive >> ingest >> silver_transform (DockerOperator) >> validate_silver (GE gate, DockerOperator) >> load_silver >> dbt_build (DockerOperator gate) >> record_run_metadata (all_done)` |
 | GE counted checks (canonical) | quarantine **0** · raw **180,387** · residual **1** (= the dupe); suite = 8 expectations in `quality/gx/expectations/` |
+| Retry routing | `retries=0` on gates (`validate_silver`, `dbt_build`) · `retries=2` elsewhere · `on_failure_callback` in `default_args` (fires after retries exhaust; `upstream_failed` never fires it) |
+| Run metadata | `devpulse_silver.pipeline_run_metadata` — unpartitioned, free `load_table_from_json` writes, free `list_rows`/`bq head` reads; summary artifact `quality/run_summary.json` (gitignored) |
 
 ## Common commands (run from repo root)
 
@@ -118,8 +120,8 @@ ruff check . && black --check .
 - [x] **Phase 0 · Wk 1** — repo, Terraform (GCS + BQ + SA), thin end-to-end slice (Days 1–3)
 - [x] **Phase 1 · Wk 2–3** — Airflow ingestion DAG, sensors/retries, 48h backfill (Days 4–5); PySpark silver job → Parquet → BQ, wired via DockerOperator (Days 6–7)
 - [x] **Phase 2 · Wk 4–5 (modeling)** — dbt staging → star schema (4 dims + incremental `fact_events`) → 3 marts + seed; 69 tests; docs/lineage (Days 8–11)
-- [ ] **Phase 2 · Wk 5 (quality)** — dbt build as an Airflow DAG gate; Great Expectations bronze→silver gates; failure alerting; run-metadata logging. 🔐 Also pending: pipeline-SA impersonation + silver-bucket grant.
-- [ ] **Phase 3 · Wk 6 🏁** — FastAPI over gold marts (pagination, caching); dashboard; GitHub Actions CI (lint, pytest, dbt build, GE). 🔐 Before any deploy: parameterized queries, auth + rate limiting, `maximum_bytes_billed`, deliberate CORS, pinned deps (see decisions.md security backlog).
+- [x] **Phase 2 · Wk 5 (quality)** — dbt gate (Day 12); GE bronze→silver gate (Day 13); failure alerting + retry routing + run-metadata logging, both paths proven (Day 14)
+- [ ] **Phase 3 · Wk 6 🏁** — FastAPI over gold marts (pagination, caching); dashboard; GitHub Actions CI (lint, pytest, dbt build, GE). 🔐 Before any deploy: parameterized queries, auth + rate limiting, `maximum_bytes_billed`, deliberate CORS, pinned deps (see decisions.md security backlog). 🔐 Carried from Phase 2: pipeline-SA impersonation + silver-bucket grant.
 - [ ] **Phase 4 · Wk 7–8 (stretch)** — Kafka + Spark Structured Streaming; real-time mart; README/diagram/demo video/"at scale" writeup. 🔐 GitHub token in secrets backend only.
 
 Full history of what each day delivered: [docs/history.md](docs/history.md).
@@ -128,11 +130,10 @@ Full history of what each day delivered: [docs/history.md](docs/history.md).
 
 > Keep this section SHORT (≤ 15 lines). `/end-session` updates it; the narrative goes to `docs/history.md`.
 
-- **Phase:** Phase 2 back half — **Day 14 in progress**: steps 0–4 committed (alerting + metadata code done); steps 5–7 (both-path proof → Phase 2 complete) remain.
-- **Last completed:** [Day 13](docs/daily/day-13.md) (2026-07-09) — GE `validate_silver` gate, counted identity 180,387 = 180,386 + 0 + 1, scripted red path. Reconciled 180,386 / 163,953 / PASS=69.
-- **Day 14 landed so far (2026-07-10, 5 commits):** `alerts.py` (pure `build_alert_payload` + POST w/ timeout; hand-fired to Discord ✅); retry routing (**retries=0 on both gates**, 2 elsewhere, callback in `default_args` — fires only after retries exhaust); validator emits `run_summary.json` (gitignored, same booleans as exit code); `record_run_metadata` PythonOperator (`trigger_rule="all_done"`, chain = **7 tasks**, parse-clean) → `transform/load_pipeline_metadata.py` (`pipeline_run_metadata`, explicit schema, free `load_table_from_json`, `summary_is_fresh` happens-before + partition-match staleness guard). 17 host pytests green.
-- **Next session (Day 14 step 5+):** `/start-session` → green run (7 green, no page, 1 metadata row) → red run (fixture → page in *seconds* vs Day 13's 11 min, row lands anyway via `all_done`) → two-layer cleanup → reconcile → docs (decisions ≥5 entries, history, glossary, skills-map) → **Phase 2 complete**. `ALERT_WEBHOOK_URL` lives in root `.env` (→ `env_file`); `pipeline_run_metadata` BQ write still unexercised.
-- **Known issues:** none blocking. **Metadata-DB persistence pattern** (Day 13 paused flag + Day 14 phantom backfill — use `--reset-dagruns`; assert-paused now `/start-session` step 7). GE committed JSON authoritative, `build_suite()` bootstrap-only. Quarantine cleanup manual. `dim_date` static 2024 spine. `event_counts.py` deprecated-not-deleted (Phase 3). Personal ADC — SA impersonation backlogged. DooD accepted locally. `maximum_bytes_billed` Phase 3.
+- **Phase:** **Phase 2 complete ✅** (Days 8–14: star schema + marts + dbt gate + GE gate + alerting + run metadata). Next up: **Phase 3, Day 15 — FastAPI over the gold marts** (plan via `/plan-day`).
+- **Last completed:** [Day 14](docs/daily/day-14.md) (2026-07-10 → 11) — alert-vs-retry routing + `pipeline_run_metadata`, **both paths proven**: red pages the *same minute* (vs Day 13's ~11 min), exactly one page, metadata row lands on failure via `all_done`. Reconciled 180,386 / 163,953 / 7,236 / **PASS=69**; 17 pytests; lint clean.
+- **Day 14 session-2 fixes (committed with the proof):** scheduler mounts are *enumerated*, not repo-root — `../quality:…:ro` added (the day plan's "known quantity" was wrong); summary reader indexed `raw`/`hour` vs artifact's `raw_rows`/`hour_rows` — the KeyError was *relabeled* "not found" by a debug broad `except` (now: specific excepts + path in message, KeyError crashes loud).
+- **Known issues:** none blocking. **Metadata-DB persistence pattern, 3 members** (paused flag · phantom backfill `--reset-dagruns` · stale durations on `upstream_failed` rows). Observer records itself as `"running"` (in-band limit — accepted). GE committed JSON authoritative, `build_suite()` bootstrap-only. Quarantine cleanup manual. `dim_date` static 2024 spine. `event_counts.py` deprecated-not-deleted (Phase 3). Personal ADC — SA impersonation backlogged. DooD accepted locally. `maximum_bytes_billed` Phase 3. Webhook URL in `.env` (secrets backend = Phase 4).
 - **Open decisions:** none — see [docs/decisions.md](docs/decisions.md).
 
 ## Project skills (slash commands)

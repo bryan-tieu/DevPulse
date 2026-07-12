@@ -743,6 +743,63 @@ always use `--reset-dagruns`; `/start-session` runbook gained an assert-paused s
 At scale this is the argument for treating the scheduler DB as stateful infrastructure — backed up,
 migrated deliberately, never assumed empty.
 
+## Day 14 · session 2 — both paths proven, Phase 2 closed (2026-07-11)
+
+### Retry policy is routing: `retries=0` on gates turned an 11-minute silence into a same-minute page
+Day 13's red drill burned ~11 minutes of blind retries (2 × 5-min delays) before anyone could know.
+Today's red run: `validate_silver` failed its **single** attempt at 01:33:55 UTC and the Discord page
+arrived within the minute. Two knobs compose: `on_failure_callback` fires only **after the retry budget
+exhausts**, and the budget on data gates is 0 because a deterministic failure re-fails identically —
+retrying data buys nothing and delays the page. Infra tasks keep `retries=2` (idempotency makes re-runs
+free). Exactly **one** page fired: `load_silver`/`dbt_build` landed `upstream_failed`, which never
+executes and therefore never fires callbacks — page-fatigue protection is structural, not convention.
+Payload gotcha: the alert read `Try: 22` — try_number is **cumulative across clears/`--reset-dagruns`
+of the same pinned run_id**, so the proof of `retries=0` is the *absence of retry-gap timestamps*, not
+the try field. *Rejected:* alert-per-retry (fatigue trains humans to ignore pages), email/SMTP, SLAs +
+listeners (named as at-scale shape, not built).
+
+### A broad `except` doesn't just hide errors — it relabels them (the KeyError that read "file not found")
+The first green run recorded NULL counts, logging "run_summary.json not found." Two real causes, peeled
+in order: **(1)** the scheduler never mounted `quality/` — the day plan's "known quantity" claimed "the
+scheduler mounts the repo root," but the compose file mounts three *enumerated* paths. A plan's claim
+about config is verified against the config file, not the memory of it; host pytest could never catch
+this (the file exists on the host). **(2)** After the mount fix, the reader indexed `run_summary["raw"]`
+/`["hour"]` where the artifact's keys are `raw_rows`/`hour_rows` — and a debug-era `except Exception`
+stamped the KeyError with the pre-written "not found" message, sending debugging back to the already-
+fixed mount. **Decisions:** `../quality:/opt/devpulse/quality:ro` (least privilege — the artifact's one
+writer is the validator container via its RW mount; the scheduler-side reader structurally can't tamper);
+specific excepts (`FileNotFoundError`/`OSError`/`JSONDecodeError`), each message carrying the resolved
+path (that one improvement cracked the case); KeyError deliberately **not** caught — future key drift
+across the JSON seam crashes loud (hard rule 2). Cost of the lesson: 4 NULL rows, preserved in the day log.
+
+### The `all_done` observer worked — and honestly recorded its own blind spots
+`record_run_metadata` ran on both paths; the red row carries the failure's evidence (raw=180388,
+quarantine=1, pipeline_check=false — the counted identity 180,388 = 180,386 + 1 + 1 held under
+poisoning, which is what makes it *counted*). Two artifacts in the table worth reading correctly:
+the observer's own tasks-array entry always says state `"running"` (it assembles the row before it can
+finish — an in-band observer can never record its own terminal state), and the red row's
+`upstream_failed` tasks show **stale durations byte-identical to a prior green run** (cleared task
+instances retain old values — third member of the metadata-DB-persists-state pattern, after the paused
+flag and the phantom DagRun). A stricter logger would NULL durations for never-executed states —
+deferred consciously. At scale, observability moves out-of-band (listeners/OpenLineage) so the observer
+survives what it observes.
+
+### Telemetry writes are free load jobs; telemetry reads are free list calls
+`pipeline_run_metadata` is written via `load_table_from_json` (free load job — not `insert_rows_json`;
+streaming inserts bill and sit in a buffer), created idempotently with an explicit schema
+(`exists_ok=True`, the `load_silver` pattern's third use), and deliberately **unpartitioned** —
+partitioning a KB-scale table is cargo-culting. Verification reads used `bq head`/`list_rows`
+(`tabledata.list` — free) instead of `SELECT *` (a billed query job, 10 MB floor); junk-row cleanup was
+`bq rm` + let the task recreate (free) rather than a billed DML DELETE. Day 7's load-not-query
+discipline, applied to the pipeline's own telemetry.
+
+### The alert says *look*; the metadata says *what happened*
+The page's exception string is `Docker container failed: {'StatusCode': 1}` — the DockerOperator
+surfaces the exit code, not the validator's reasoning. That's division of labor, not a gap: the alert
+carries ids + timestamp (which task, when — enough to page a human), while the metadata row and
+`run_summary.json` carry counts and per-check verdicts (why). All three consumers — operator log, alert,
+metadata table — derive from the same verdict booleans Day 13 built; none parses another's text.
+
 ---
 
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)

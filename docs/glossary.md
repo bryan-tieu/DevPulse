@@ -112,7 +112,7 @@
 
 **Apache Airflow** — The workflow **orchestrator**: schedules, runs, retries, and monitors pipeline tasks as **DAGs**. Runs locally in Docker. Industry-standard, hence chosen.
 
-**DAG (Directed Acyclic Graph)** — Airflow's unit of a workflow: tasks (nodes) with dependencies (edges), no cycles. DevPulse's `devpulse_ingest` DAG: `wait_for_archive >> ingest >> silver_transform >> load_silver`.
+**DAG (Directed Acyclic Graph)** — Airflow's unit of a workflow: tasks (nodes) with dependencies (edges), no cycles. DevPulse's `devpulse_ingest` DAG (7 tasks): `wait_for_archive >> ingest >> silver_transform >> validate_silver >> load_silver >> dbt_build >> record_run_metadata`.
 
 **Task / Operator** — A DAG node is a **task**, an instance of an **Operator** (a templated unit of work). Used here: **PythonOperator** (run a Python callable), **PythonSensor** (wait for a condition), **DockerOperator** (launch a container).
 
@@ -133,6 +133,20 @@
 **XCom** — Airflow's cross-task message passing (small values). The `ingest` task passes the bronze object key to the next task via XCom.
 
 **DockerOperator / DooD (Docker-out-of-Docker)** — An Airflow task that launches a **sibling** container on the host Docker daemon via a mounted `/var/run/docker.sock`. `silver_transform` uses it to run the Spark image. Three gotchas: the socket mount = **host-root** on the scheduler (a real surface, accepted for local dev); mount source paths resolve on the *host* daemon (so `HOST_PROJECT_DIR`/`HOST_ADC` are injected); `mount_tmp_dir=False` (the default fails on Windows). At scale → `KubernetesPodOperator`/Dataproc (no socket).
+
+**`on_failure_callback`** — A function Airflow invokes with the task's context when a task *finally* fails — i.e. only **after the retry budget exhausts**. That timing is what makes retry policy compose with alerting: `retries=2` on infra tasks = flakes self-heal silently; `retries=0` on data gates = the first failure pages immediately. In DevPulse: `alerts.py::notify_failure` in `default_args`, POSTing a compact JSON (ids + counts, no event data) to a Discord webhook with a **timeout** (an alert path that can hang the thing it monitors is a bug). `upstream_failed` tasks never execute, so they never fire callbacks — one failure produces **one** page.
+
+**Retry policy by failure class** — Retries exist for *stochastic* failures (network blips, sensor flakes — idempotency makes re-runs free); *deterministic* failures (a data gate re-checking the same bad data) re-fail identically, so retrying only delays the page. Hence `retries=0` on `validate_silver`/`dbt_build`, `retries=2` elsewhere. Day 13→14 measured the difference: ~11 minutes of blind retries vs a same-minute page.
+
+**Trigger rule / `all_done`** — Per-task rule for when it may run, given upstream states. Default `all_success` is why a failed gate stops the pipeline; `trigger_rule="all_done"` (run once upstream *finishes*, in any state) is how an **observer** opts out of dying with the failure it must record. `record_run_metadata` uses it — a metadata row lands even (especially) on red runs.
+
+**`try_number`** — The attempt counter on a task instance. Gotcha: it is **cumulative across clears** (`--reset-dagruns`, manual clear) of the same run_id — an alert reading `Try: 22` reflects a day of re-proofs, not 22 retries. Evidence of `retries=0` working is the absence of retry-gap timestamps, not this field.
+
+**Page fatigue** — The design constraint that the scarcest resource in an alerting system is the recipient's trust: alert on every retry and humans learn to ignore alerts. DevPulse pages on *final* failure only, once per run.
+
+**Run metadata (in-band observer)** — One structured row per pipeline run (`pipeline_run_metadata`: run id, logical date, per-task states/durations, validator counts, composite verdict). Written by a task *inside* the DAG it observes — honest for one DAG, with two measured blind spots: the observer records itself as `"running"` (it can't see its own end), and cleared-but-not-executed tasks carry **stale durations** from prior attempts. At scale observability moves **out-of-band** (Airflow listeners, OpenLineage) so the observer survives scheduler death.
+
+**Logs vs artifacts** — "Logs are for humans, artifacts are for machines": parsing log lines couples consumers to formatting; a structured file (`run_summary.json`) derived from the same verdict booleans gives every consumer (operator, alert, metadata table, future API) one source of truth. The validator's exit code, printed lines, and JSON all derive from one set of booleans — no consumer parses another's text.
 
 ---
 
@@ -256,4 +270,5 @@
 | Gold dataset | `devpulse_gold` (dbt target) |
 | Pipeline SA | `devpulse-pipeline@devpulse-dp2622.iam.gserviceaccount.com` |
 | Canonical test hour | `2024-01-01 15:00` — **180,386** rows (180,387 raw, 1 dupe) |
+| Run metadata table | `devpulse_silver.pipeline_run_metadata` — unpartitioned (KB-scale), free load-job writes, free `list_rows` reads |
 | Source URL pattern | `https://data.gharchive.org/YYYY-MM-DD-H.json.gz` |
