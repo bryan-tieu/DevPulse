@@ -89,6 +89,7 @@ x-airflow-common:
     - ../ingestion:/opt/devpulse/ingestion:ro
     - ../transform:/opt/devpulse/transform:ro
     - ../config.py:/opt/devpulse/config.py:ro
+    - ../quality:/opt/devpulse/quality:ro
     - type: bind
       source: ${APPDATA}/gcloud/application_default_credentials.json
       target: /opt/airflow/gcp/adc.json

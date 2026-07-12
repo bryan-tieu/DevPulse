@@ -96,8 +96,8 @@ def _load_pipeline_metadata(**context) -> str:
             )
 
             if fresh_summary_check:
-                raw_rows = run_summary["raw"]
-                hour_rows = run_summary["hour"]
+                raw_rows = run_summary["raw_rows"]
+                hour_rows = run_summary["hour_rows"]
                 quarantine_rows = run_summary["quarantine_rows"]
                 residual_rows = run_summary["residual_rows"]
             else:
@@ -108,8 +108,11 @@ def _load_pipeline_metadata(**context) -> str:
                 quarantine_rows = None
                 residual_rows = None
 
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        print("run_summary.json not found. Assigning NULL to run_summary and its counts")
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
+        print(
+            f"run_summary.json caused an error. Threw exception: {e} "
+            "Assigning NULL to run_summary and its counts"
+        )
         run_summary = None
         raw_rows = None
         hour_rows = None
