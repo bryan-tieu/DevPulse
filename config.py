@@ -17,3 +17,4 @@ def _require(name: str) -> str:
 GCP_PROJECT = _require("GCP_PROJECT")
 BRONZE_BUCKET = _require("BRONZE_BUCKET")
 BQ_DATASET = _require("BQ_DATASET")
+BQ_GOLD_DATASET = _require("BQ_GOLD_DATASET")
