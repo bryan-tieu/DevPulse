@@ -48,7 +48,10 @@ Execute in order; one small commit per step. Steps 0 and 6 are setup/verify, not
 - 📦 **Six commits, imperative mood:** `add parameterized query layer with cost cap` · `add trending endpoint with validated pagination` · `add language momentum and leaderboard endpoints` · `add ttl cache over mart queries` · `add pipeline runs endpoint over run metadata` · `retire phase-0 event counts slice` · plus the docs commit.
 
 ## Done criteria
-- [ ] `api/queries.py`: pure builders + executor; **every value a bound `@param`**, every `QueryJobConfig` carries `maximum_bytes_billed`; builder pytest green with zero GCP.
+
+> **Session 1 (2026-07-12 → 13, past midnight) closed after step 1** — commit `d926a22` (query layer + `config.py` gold constant + 10 pytests, suite 27 green, lint clean). Plan corrections found in-session: **`date_key` is the `YYYYMMDD` INTEGER smart key, not DATE** (step 2's `date: date` default needs an edge conversion decision — the plan's claim lost to `bq show --schema`); step-1 verification gained a **server-side dry run** (free; validated the three queries at 331,541 / 1,444,080 / 167 bytes). Findings banked in decisions.md: the DI shadow-binding bug (`run_query` rebuilt its injected client — caught red-first by a mock test), values-vs-identifiers, cap-as-tripwire. One L4 handout (the mock-client test) logged in warmups.md — same past-midnight window as Day 14's. Steps 2–8 next session.
+
+- [x] `api/queries.py`: pure builders + executor; **every value a bound `@param`**, every `QueryJobConfig` carries `maximum_bytes_billed`; builder pytest green with zero GCP. *(10 tests incl. the mock-client DI test; dry-run validated all three queries server-side.)*
 - [ ] Four endpoints live and documented at `/docs` with Pydantic response models: `/trending`, `/languages/momentum`, `/leaderboard`, `/runs`; `limit=101` → **422**; all pagination under a deterministic ORDER BY.
 - [ ] Endpoint-vs-warehouse reconciliation: paged sums = mart truths — stars **7,236** · event_count **180,386** (incl. `Unknown`) · contributions **163,953**.
 - [ ] Cache proven: identical request → `X-Cache: miss` then `hit`, **no second BQ query job** in job history; expiry pytest green with fake clock.

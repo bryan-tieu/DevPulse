@@ -802,6 +802,48 @@ metadata table — derive from the same verdict booleans Day 13 built; none pars
 
 ---
 
+## Day 15 · session 1 — the parameterized query layer (2026-07-12 → 13) — partial; day continues
+
+### Values bind, identifiers are config — the two halves of query safety
+`api/queries.py` is the API's only SQL assembly point: three pure builders return `(sql, params)`
+with **every value a `ScalarQueryParameter`** (`@date_key`/`@limit`/`@offset`, explicit `INT64` —
+type autodetect exists and is the same trap as `inferSchema`), and one executor stamps
+`maximum_bytes_billed=100_000_000` on every `QueryJobConfig`. Injection dies structurally: the value
+travels out-of-band and never enters the SQL text. The half that *can't* be parameterized —
+identifiers — is handled by construction: table ids are composed only from `config.py` constants
+(backtick-quoted; the hyphen in `devpulse-dp2622` breaks unquoted parsing), never from request
+input. *Rejected:* f-string values (the Day-3 thin slice's pattern, retired with it);
+`SELECT *` (bytes billed = columns scanned). The 100 MB cap is a tripwire, not a constraint — the
+three queries dry-ran at 331,541 / 1,444,080 / 167 bytes; it exists to fail an over-budget query
+*before* it scans, and the habit is what transfers to 10 TB tables. **The marts made the queries
+boring on purpose:** filter + order + paginate only — every aggregate the API serves was computed
+once by dbt at build time ("the warehouse computes, the API serves"). Deterministic pagination
+required `ORDER BY daily_rank` **plus a grain-unique tiebreaker** — `RANK()` ties would otherwise
+let page boundaries shuffle between requests.
+
+### The injected client is the seam — and the body must not rebuild it
+`run_query(client, …)` accepted a client parameter, then its first line constructed a real one —
+dependency injection defeated by a shadow binding (the same last-binding-wins class as the
+morning's `hour`-shadow warmup, pointed at production GCP from inside the test suite). Caught
+**red-first** by a mock-client test (`Mock()` + `call_args` inspection — asserts the cap, the params,
+and that the *injected* object was the one used); the red also exposed a `bigquery.client`
+lowercase typo that had sat in the one function nothing had executed. Two lessons banked: a DI
+test's first assertion should be "you talked to *my* object," and **BQ dry runs are the `terraform
+plan` of query jobs** — `QueryJobConfig(dry_run=True)` validates SQL + param types server-side for
+free, catching the bug classes (`DESC1`, wrong param type) that live in SQL strings where
+`py_compile` and string-assertion pytests can't see.
+
+### `date_key` is an INT, and the plan said DATE — the artifact wins
+The day-15 plan asserted the endpoints take `date: date` and BQ returns `date_key` as a Python
+`date`. The warehouse says otherwise: `date_key` is the `YYYYMMDD` **INTEGER** smart key (the Day 9
+spine decision, propagated through the fact to every mart). Params are `INT64`, canonical value
+`20240101`. Same class as Day 14's "scheduler mounts the repo root" plan error: a plan claim about
+an artifact was trusted over the artifact. Checking `bq show --schema` before typing the param
+types is what caught it. (Step 2 decision parked: endpoints accept ISO `?date=` and convert at the
+edge, or take the raw int.)
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
@@ -809,15 +851,16 @@ ADC, least-privilege IAM, bucket public-access-prevention enforced. The items be
 patterns that become real vulnerabilities once user input or a public deployment is added. They're
 also flagged inline against the relevant phases in `CLAUDE.md`. Goal stated by me: eventually deploy.
 
-- **Parameterized queries (Phase 3).** `api/main.py` builds SQL with an f-string. Safe today (no
-  request input), but adding `/languages/{lang}` or pagination params would make it SQL-injectable.
-  Use `QueryJobConfig(query_parameters=[...])`. Identifiers (table/column names) can't be
-  parameterized — they must come from a fixed allowlist, never from the request.
+- **Parameterized queries (Phase 3).** ✅ **Landed Day 15 s1** for the new query layer
+  (`api/queries.py`: every value a bound param, identifiers from config only). ⚠️ The old f-string
+  `/event-counts` endpoint in `api/main.py` still stands until Day 15 step 2 rewrites it — the item
+  closes when that file dies.
 - **API auth + rate limiting (Phase 3, before any deploy).** The endpoint is unauthenticated. Fine
   on localhost; once on Cloud Run an open endpoint over BigQuery is both data exposure and a
   **billing-DoS** (each request runs a paid query job). Add auth (API key / Cloud Run IAM) + limits.
-- **`maximum_bytes_billed` cap (Phase 3).** No per-query cost ceiling today. Set it on every query
-  job as defense-in-depth for cost and abuse; pairs with the project byte-scanned quota.
+- **`maximum_bytes_billed` cap (Phase 3).** ✅ **Landed Day 15 s1**: `run_query` stamps
+  `maximum_bytes_billed=100_000_000` on every `QueryJobConfig`, pinned by a unit test. Remaining:
+  the old `/event-counts` path (dies in step 2) and any future ad-hoc query jobs.
 - **CORS (Phase 3).** When the dashboard calls the API, configure CORS deliberately — never
   `allow_origins=["*"]` together with credentials.
 - **Dependency pinning (Phase 3 CI).** `requirements.txt` is unpinned (Terraform is pinned + locked

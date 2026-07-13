@@ -130,11 +130,13 @@ Full history of what each day delivered: [docs/history.md](docs/history.md).
 
 > Keep this section SHORT (≤ 15 lines). `/end-session` updates it; the narrative goes to `docs/history.md`.
 
-- **Phase:** **Phase 2 complete ✅** (Days 8–14: star schema + marts + dbt gate + GE gate + alerting + run metadata). Next up: **Phase 3, Day 15 — FastAPI over the gold marts** ([plan ready](docs/daily/day-15.md)).
-- **Last completed:** [Day 14](docs/daily/day-14.md) (2026-07-10 → 11) — alert-vs-retry routing + `pipeline_run_metadata`, **both paths proven**: red pages the *same minute* (vs Day 13's ~11 min), exactly one page, metadata row lands on failure via `all_done`. Reconciled 180,386 / 163,953 / 7,236 / **PASS=69**; 17 pytests; lint clean.
-- **Day 14 session-2 fixes (committed with the proof):** scheduler mounts are *enumerated*, not repo-root — `../quality:…:ro` added (the day plan's "known quantity" was wrong); summary reader indexed `raw`/`hour` vs artifact's `raw_rows`/`hour_rows` — the KeyError was *relabeled* "not found" by a debug broad `except` (now: specific excepts + path in message, KeyError crashes loud).
-- **Known issues:** none blocking. **Metadata-DB persistence pattern, 3 members** (paused flag · phantom backfill `--reset-dagruns` · stale durations on `upstream_failed` rows). Observer records itself as `"running"` (in-band limit — accepted). GE committed JSON authoritative, `build_suite()` bootstrap-only. Quarantine cleanup manual. `dim_date` static 2024 spine. `event_counts.py` deprecated-not-deleted (Phase 3). Personal ADC — SA impersonation backlogged. DooD accepted locally. `maximum_bytes_billed` Phase 3. Webhook URL in `.env` (secrets backend = Phase 4).
-- **Open decisions:** none — see [docs/decisions.md](docs/decisions.md).
+- **Phase:** **Phase 3 in progress** — [Day 15](docs/daily/day-15.md) (FastAPI over the gold marts), **step 1 of 8 done** (session 1, 2026-07-12→13). Phase 2 complete ✅ (Days 8–14).
+- **Day 15 s1 landed** (`d926a22`): `api/queries.py` — 3 pure mart-query builders (every value a bound `@param`, explicit `INT64`; identifiers from config only, backticked) + `run_query` executor with **`maximum_bytes_billed=100 MB`** on every job; `BQ_GOLD_DATASET` in config/.env; 10 new pytests (**suite = 27**), incl. a mock-client DI test that caught `run_query` rebuilding its injected client (shadow-binding, red→green). All three queries dry-run validated (331,541 / 1,444,080 / 167 B).
+- **Plan correction (banked):** `date_key` is the `YYYYMMDD` **INTEGER** smart key, not DATE — step 2 must pick: ISO `?date=` converted at the edge, or raw int param.
+- **Next:** Day 15 step 2 — rewrite `api/main.py`: `get_bq_client()` dependency, `/trending` endpoint (validated pagination, Pydantic model), kills the f-string `/event-counts`. Then steps 3–8 per the [plan](docs/daily/day-15.md).
+- **Warmups:** item 4 (Spark `run()` + session config) passed ✅ cold 2026-07-12 (retire-pass ≥ 07-19); items 1–3 repeats due ~07-15/17/18. One L4 handout logged (mock-client test — past-midnight pattern, 2nd occurrence).
+- **Known issues:** none blocking. Metadata-DB persistence pattern, 3 members (paused flag · `--reset-dagruns` · stale durations). Observer self-state `"running"` (accepted). Quarantine cleanup manual. `dim_date` static 2024 spine. `event_counts.py` + old `/event-counts` die in Day 15 step 2/6. Personal ADC — SA impersonation backlogged. DooD accepted locally. `maximum_bytes_billed` ✅ in new query layer (old path pending step 2). Webhook URL in `.env` (secrets backend = Phase 4).
+- **Open decisions:** date-param shape at the API edge (step 2, small) — see [docs/decisions.md](docs/decisions.md).
 
 ## Project skills (slash commands)
 

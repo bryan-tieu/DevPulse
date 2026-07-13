@@ -218,7 +218,7 @@
 
 **Docker socket (`/var/run/docker.sock`)** — The Unix socket the Docker daemon listens on. Mounting it into a container grants **host-root-equivalent** control — the surface the `silver_transform` DockerOperator accepts for local dev (at scale, replaced by an authenticated k8s/Dataproc API call).
 
-**FastAPI** — The Python web framework serving the gold marts as HTTP endpoints (`/event-counts`, later `/trending`, `/languages`, `/leaderboard`). Currently reads the deprecated `hourly_event_counts` table; moves onto gold in the Phase 3 rework.
+**FastAPI** — The Python web framework serving the gold marts as HTTP endpoints (`/trending`, `/languages/momentum`, `/leaderboard`, `/runs`). The Phase 3 rework began Day 15: a parameterized, cost-capped query layer (`api/queries.py`) with a pure-builder/executor split; the endpoints + the death of the old f-string `/event-counts` follow in step 2.
 
 **Great Expectations (GE)** — A data-quality framework for validation **gates** between layers (planned bronze→silver). Where the quarantined malformed-`created_at` rows get a count-and-alert instead of a silent drop.
 
@@ -252,7 +252,11 @@
 
 **PII (Personally Identifiable Information)** — Here, the **author email addresses** in GH Archive commit payloads. Bronze is locked down; silver **drops `payload`** entirely; gold keeps actor identity to `actor_id`/`actor_login` (public username) only — never email. A boundary re-asserted at `dim_actor`.
 
-**Parameterized queries** — Passing user input to SQL as bound **parameters** (`QueryJobConfig(query_parameters=…)`), never f-string interpolation — the fix for SQL injection. Identifiers (table/column names) can't be parameterized; they come from a fixed **allowlist**. Latent in the API today (no request input yet); required before Phase 3 deploy.
+**Parameterized queries** — Passing user input to SQL as bound **parameters** (`QueryJobConfig(query_parameters=…)`), never f-string interpolation — the fix for SQL injection: the value travels out-of-band and never enters the SQL text. Identifiers (table/column names) can't be parameterized in any engine; they come only from config constants / a fixed **allowlist**. Live since Day 15 (`api/queries.py` — every value a `ScalarQueryParameter` with an **explicit type**; autodetect is the `inferSchema` trap).
+
+**`maximum_bytes_billed`** — A per-query-job cost ceiling (`QueryJobConfig`): BigQuery **fails the job before scanning** if its estimate exceeds the budget. Contrast: billing alerts fire after the fact; IAM/project quotas are blunt. DevPulse: 100 MB on every API query job (a tripwire, not a constraint — the mart queries dry-run at KBs–MBs), pinned by a unit test. Habit at 10 MB scale = muscle memory at 10 TB scale.
+
+**Dry run (BigQuery)** — `QueryJobConfig(dry_run=True)`: the server validates SQL syntax and parameter types and returns `total_bytes_processed` **without executing or billing** — the `terraform plan` of query jobs. Catches the bug classes that live inside SQL strings where `py_compile` and string-assertion tests can't see (clause-order errors, typos, param-type mismatches).
 
 **Billing-DoS** — An open, unauthenticated endpoint over BigQuery where each request runs a **paid query job** — both data exposure and a cost-exhaustion attack. Mitigated by auth + rate limiting + `maximum_bytes_billed` before any public deploy.
 
