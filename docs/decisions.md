@@ -839,8 +839,45 @@ The day-15 plan asserted the endpoints take `date: date` and BQ returns `date_ke
 spine decision, propagated through the fact to every mart). Params are `INT64`, canonical value
 `20240101`. Same class as Day 14's "scheduler mounts the repo root" plan error: a plan claim about
 an artifact was trusted over the artifact. Checking `bq show --schema` before typing the param
-types is what caught it. (Step 2 decision parked: endpoints accept ISO `?date=` and convert at the
-edge, or take the raw int.)
+types is what caught it. **Resolved at step 2 (s2, 2026-07-13): endpoints accept ISO `?date=` as a
+typed `date` and convert to the `YYYYMMDD` int at the edge.** Why: a typed `date` lets FastAPI 422
+impossible dates (`2024-13-01`) at the front door, where a raw int param would bind `20241301`,
+scan, and return `[]` with a 200 — a silent drop wearing a success code. Also keeps the smart key
+(a warehouse-internal representation) out of the public HTTP contract, and matches the Day-16
+dashboard's native date types. *Raw int wins* only for internal tooling whose callers already hold
+warehouse `date_key`s.
+
+---
+
+## Day 15 · session 2 — `/trending` lands (2026-07-13) — partial; day continues
+
+### The exception class is the client library's fallback — discriminate on the job error `reason`
+Tripping `maximum_bytes_billed` surfaces as `InternalServerError` — but not because anyone mapped
+it there. The REST job error is 400-class; the Python client maps job-error **reason strings** to
+exception classes via a lookup table, and `bytesBilledLimitExceeded` isn't in it, so it falls
+through to the 500 default. Catching the class would therefore conflate our cost policy with
+genuine backend failures (`internalError`, `backendError` — same class, honest 500s). The handler
+catches `GoogleAPIError` broadly and branches on `e.errors[*]["reason"]` — the reason string is
+the stable contract; the class is a lossy HTTP bucket. **Verified empirically for free**: a
+1-byte cap fails the job *before* it scans (0 bytes billed) — the query-job sibling of `terraform
+plan`. Two guesses (`Forbidden`, then `InternalServerError`) preceded the experiment; the second
+was accidentally right, which is worse than wrong — the artifact, not the guess, is what the
+`except` is written against. Bonus from the error message: the cap has a **10 MB floor**
+(`10485760 or higher required`) — the billing minimum surfacing in the API.
+
+### Per-request client construction rejected — `lru_cache` singleton behind `Depends`
+`get_bq_client()` under `@lru_cache(maxsize=1)`: lazy construction, one ADC handshake per
+process, and `dependency_overrides` still works because FastAPI swaps the *dependency*, never
+calling the real function in tests. Rejected: a client per request (repeated auth cost for
+zero benefit) and a module-level global (constructed at import — every test that touches the
+app would hit GCP before an override could exist; the Day-3 slice's exact bug).
+
+### Environment finding: this starlette wants `httpx2`, and `python` ≠ the venv
+`TestClient` needed an HTTP transport; the error message named **`httpx2`** (not `httpx` — the
+first install guessed the classic name). The wrong install also landed in the *global* 3.11
+because a fresh shell's `python` isn't the venv — caught by `No module named pytest`, fixed with
+`.venv\Scripts\python.exe` explicitly and the global stray uninstalled. `httpx2` pinned in
+`requirements-dev.txt` (tests only; the API itself makes no HTTP calls).
 
 ---
 
@@ -851,10 +888,10 @@ ADC, least-privilege IAM, bucket public-access-prevention enforced. The items be
 patterns that become real vulnerabilities once user input or a public deployment is added. They're
 also flagged inline against the relevant phases in `CLAUDE.md`. Goal stated by me: eventually deploy.
 
-- **Parameterized queries (Phase 3).** ✅ **Landed Day 15 s1** for the new query layer
-  (`api/queries.py`: every value a bound param, identifiers from config only). ⚠️ The old f-string
-  `/event-counts` endpoint in `api/main.py` still stands until Day 15 step 2 rewrites it — the item
-  closes when that file dies.
+- **Parameterized queries (Phase 3).** ✅ **Closed Day 15 s2** — `api/queries.py` (every value a
+  bound param, identifiers from config only) is now the *only* SQL assembly point: the s2 rewrite
+  of `api/main.py` deleted the old f-string `/event-counts` endpoint. `transform/event_counts.py`
+  + `run.py` (dead code, no SQL surface) fall in step 6.
 - **API auth + rate limiting (Phase 3, before any deploy).** The endpoint is unauthenticated. Fine
   on localhost; once on Cloud Run an open endpoint over BigQuery is both data exposure and a
   **billing-DoS** (each request runs a paid query job). Add auth (API key / Cloud Run IAM) + limits.
