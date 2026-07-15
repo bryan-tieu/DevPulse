@@ -879,6 +879,35 @@ because a fresh shell's `python` isn't the venv — caught by `No module named p
 `.venv\Scripts\python.exe` explicitly and the global stray uninstalled. `httpx2` pinned in
 `requirements-dev.txt` (tests only; the API itself makes no HTTP calls).
 
+### `?date=` required, not defaulted — the s2 divergence confirmed deliberate (Day 15 s3)
+The plan defaulted `date` to `2024-01-01`; the build made it required, and it stays required. A
+literal default returns a plausible-looking **200 of stale data forever** when a client omits the
+param — the same silent-drop-wearing-a-success-code class the typed-`date` decision killed for
+impossible dates, moved one notch earlier. Required → the omission 422s at the edge; pinned by
+the `*_missing_date` tests on all three endpoints. The *defensible* default — "latest complete
+partition," resolved server-side from `pipeline_run_metadata` — is named for the Day-16 dashboard
+if ergonomics demand it (step 5 builds the capability anyway); a hardcoded literal never wins
+outside a demo.
+
+### The validation bound that made data unreachable — offset vs. mart cardinality (Day 15 s3)
+`/leaderboard` inherited `/trending`'s `offset le=10_000` — and `contributor_leaderboard` holds
+**32,681 rows** for the day, so every row past ~10,100 was unreachable *through our own API*: the
+reconciliation loop 422s at page 102 (or silently under-sums if written soft). Bound raised to an
+effectively-unbounded ceiling with `ge=0` doing the real validation, pinned by
+`test_leaderboard_deep_offset` (200 **and** the bound `offset=30000` on the wire) so a
+well-meaning "tidy the bound back down" breaks loudly. The lesson: **an edge bound encodes a
+cardinality assumption — check it against `numRows`, not vibes.** And the reason the tension
+exists at all is OFFSET pagination: deep pages are skip-counted, which is exactly the argument
+for keyset pagination (`WHERE rank > last_seen`) in a serving DB — learning-goal theory arriving
+as a lived 422.
+
+### Finding: the access log is the ground truth of what crossed the wire (Day 15 s3)
+The stars reconciliation summed **710 vs 7,236** — and the diagnosis came not from rereading the
+loop but from the uvicorn access log: every line read `limit=50&offset=0`; the loop's parameters
+never left the client. When client and server disagree, the server's log is the record of what
+was actually requested — the Day-14 rule (artifacts over mental models) applied to HTTP. Caught
+and fixed solo.
+
 ---
 
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
