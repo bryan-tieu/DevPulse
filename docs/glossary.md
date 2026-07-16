@@ -236,6 +236,16 @@
 
 ---
 
+## API & serving
+
+**Cache-aside** — The caching pattern where the *caller* owns the flow: try the cache; on miss, fetch from the source, store, serve. DevPulse: `cache_run_query()` in `api/cache.py` — a shared helper returning `(rows, hit)` so the hit/miss fact is born where the `X-Cache: hit|miss` response header is set (a fact a caller needs must be returned or observable, never swallowed by a wrapper). Contrast: read-through, where the cache itself fetches.
+
+**TTL (time-to-live) cache** — A cache whose entries expire after a fixed age. **The TTL is a freshness policy, not an optimization**: 300 s encodes "answers may be up to 5 min stale." For batch-updated marts the *honest* invalidation key is the latest pipeline `run_id` (data changes exactly when a run lands) — TTL is the accepted approximation. Contrast **LRU** (`functools.lru_cache`): evicts on **capacity**, has no clock — the hottest key is always most-recently-used, so the most popular answer goes stale *forever* (fine for the BQ-client singleton, which never ages; wrong for query results). Real caches compose both: freshness *and* memory are separate policies (Redis `maxmemory` + per-key TTL). DevPulse's is in-process = **per-worker** (two uvicorn workers = two caches) and unbounded with read-time-only eviction (abandoned keys never reclaimed) — named, accepted at localhost scale.
+
+**Monotonic clock (`time.monotonic`)** — A clock that only moves forward, unlike the wall clock (`time.time`), which NTP can step backwards. Cache expiry math on a wall clock silently *extends* entries past their TTL on a back-step (policy violation); a forward jump merely expires early (pennies). Injected as a constructor argument so tests control time with a fake clock — no `sleep()`.
+
+**Singleton vs per-request scope (DI)** — What a `Depends` provider returns per call. `@lru_cache` on the provider = one shared instance (required for a cache: a fresh-per-request cache structurally cannot hit — nothing errors, `X-Cache: hit` just never appears). The flip side in tests: a session-wide singleton leaks state *between tests* — DevPulse resets it with an autouse `conftest.py` fixture (`get_query_cache.cache_clear()`), chosen over per-test overrides so isolation can't be forgotten in the next test file. Both failure modes were hit live on Day 15 s4.
+
 ## Security & credentials
 
 **ADC (Application Default Credentials)** — Google's mechanism for discovering credentials from the environment (`gcloud auth application-default login` → a short-lived user token). DevPulse authenticates **keyless** via ADC everywhere (Terraform, Spark, Airflow, dbt), bind-mounted read-only into containers — **no SA key on disk**.

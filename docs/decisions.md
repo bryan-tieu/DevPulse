@@ -908,6 +908,49 @@ never left the client. When client and server disagree, the server's log is the 
 was actually requested — the Day-14 rule (artifacts over mental models) applied to HTTP. Caught
 and fixed solo.
 
+### Hand-rolled TTL cache over `cachetools`/`lru_cache` (Day 15 s4)
+The mart cache is ~20 lines in `api/cache.py`: dict of `key -> (expires_at, rows)`, expiry on an
+**injectable `time.monotonic`** (wall clocks step backwards under NTP — a back-step silently extends
+entries past their TTL; monotonic can't), `get` raising `KeyError` for absent **and** expired
+(indistinguishable by design — and the `.get()`-returns-`None` alternative was live-disproven: an
+empty cached result is falsy, so a `None` miss-check re-queries forever *or* returns `(None, hit)`;
+the first draft had exactly that bug). Rejected: `cachetools.TTLCache` (no new dependency for 20
+lines — and its constructor *requires* the `maxsize` we deliberately don't want); `functools.lru_cache`
+(evicts on **capacity**, not time — the hottest key is always most-recently-used, so the most popular
+answer would go stale forever after each pipeline run; kept where it belongs, memoizing the never-stale
+BQ-client singleton). Named, not built: the honest invalidation key is the latest `run_id` in
+`pipeline_run_metadata` (marts change exactly when a run lands; TTL 300 s is the approximation), and
+shared caching (Redis) the moment there's a second worker — in-process = per-worker. Also accepted
+consciously: rows returned **by reference** (read-only contract in a comment; endpoints only
+serialize — a per-hit copy buys a guarantee nobody needs), and no capacity bound + read-time-only
+eviction (abandoned keys never reclaimed; kilobytes at localhost scale, a leak behind real traffic).
+
+### Finding: cache scoping failed in both directions in one afternoon (Day 15 s4)
+The two cache-scope failure modes are not hypothetical — both fired within an hour. (1) **Too shared:**
+the `@lru_cache` provider singleton persisted across the pytest session, so 7 pre-existing error-path
+tests went red with `assert 200 == 500` — earlier happy-path tests had cached the same
+`(sql, param values)` key, and the endpoint served cached rows while its mock client was rigged to
+explode. That *is* the production behavior: **a cache in front of a failing backend masks the outage
+until TTL** — an error test getting a confident 200 with stale rows is what real users see during an
+incident. (2) **Too fresh:** the test fix's first draft
+(`dependency_overrides[get_query_cache] = lambda: QueryCache(300)`) constructed *inside* the lambda —
+FastAPI calls overrides per request, so every request got a brand-new empty cache and `miss/miss`
+replaced `miss/hit`; nothing errored, the cache just structurally couldn't hit. Fix: isolation via an
+**autouse `conftest.py` fixture** (`get_query_cache.cache_clear()` before each test) — chosen over
+per-test overrides because per-test isolation must be *repeated in every future test file* and
+forgetting it doesn't error, it flakes order-dependently (copy-paste drift is the known dominant
+defect class). Bonus finding: the sibling `different_date_misses` test passed against the broken
+per-request cache too — miss + `call_count==2` is also what a cache-that-never-works produces; a
+test green for the wrong reason is worse than red.
+
+### Endpoint reconciliation instrumentation removed with the cache wiring (Day 15 s4)
+The s3 `print(sum(...))` lines in the three endpoints were reconciliation *instruments*, not product
+code — left in, they computed a full-page aggregate and wrote to stdout on **every request forever**.
+Removed in the same diff that replaced `run_query` with the cache helper (the try-blocks were already
+open). Rule: instrumentation that proved a milestone gets deleted (or promoted to a real artifact/test)
+the session it succeeds — the deep-offset and reconciliation *tests* are the durable form of the same
+proof.
+
 ---
 
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
