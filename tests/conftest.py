@@ -12,6 +12,17 @@ PySpark + Java only exist in the Spark container, so on a host checkout (e.g. th
 import os
 import sys
 
+import pytest
+
+from api.cache import get_query_cache
+
+
+@pytest.fixture(autouse=True)
+def _fresh_query_cache():
+    get_query_cache.cache_clear()
+    yield
+
+
 try:
     import pyspark  # noqa: F401
 

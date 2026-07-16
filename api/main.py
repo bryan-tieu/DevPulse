@@ -1,16 +1,16 @@
 from datetime import date
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from google.api_core import exceptions as gcp_exceptions
 from google.cloud import bigquery
 from pydantic import BaseModel
 
+from api.cache import QueryCache, cache_run_query, get_query_cache
 from api.queries import (
     build_language_momentum_query,
     build_leaderboard_query,
     build_trending_query,
-    run_query,
 )
 from config import GCP_PROJECT
 
@@ -76,7 +76,9 @@ class LeaderboardResponse(BaseModel):
 
 @app.get("/trending", response_model=TrendingResponse)
 def trending(
+    response: Response,
     client: bigquery.Client = Depends(get_bq_client),
+    cache: QueryCache = Depends(get_query_cache),
     day: date = Query(alias="date", description="Partition date to read"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=10_000),
@@ -87,9 +89,8 @@ def trending(
     sql, params = build_trending_query(date_key, limit, offset)
 
     try:
-        rows = run_query(client, sql, params)
-        total_stars = sum(row["stars"] for row in rows if "stars" in row)
-        print(total_stars)
+        rows, hit = cache_run_query(client, sql, params, cache)
+
     except gcp_exceptions.GoogleAPIError as e:
 
         # exception class is the library fallback; use
@@ -105,6 +106,8 @@ def trending(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Upstream warehouse error"
         ) from e
 
+    response.headers["X-Cache"] = "hit" if hit else "miss"
+
     return TrendingResponse(
         date=day, limit=limit, offset=offset, results=[TrendingRepo(**row) for row in rows]
     )
@@ -112,7 +115,9 @@ def trending(
 
 @app.get("/languages/momentum", response_model=LanguageMomentumResponse)
 def language_momentum(
+    response: Response,
     client: bigquery.Client = Depends(get_bq_client),
+    cache: QueryCache = Depends(get_query_cache),
     day: date = Query(alias="date", description="Partition date to read"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=100_000),
@@ -123,9 +128,8 @@ def language_momentum(
     sql, params = build_language_momentum_query(date_key, limit, offset)
 
     try:
-        rows = run_query(client, sql, params)
-        total_events = sum([row["event_count"] for row in rows if "event_count" in row])
-        print(total_events)
+        rows, hit = cache_run_query(client, sql, params, cache)
+
     except gcp_exceptions.GoogleAPIError as e:
         capped = any(err.get("reason") == "bytesBilledLimitExceeded" for err in e.errors)
 
@@ -139,6 +143,8 @@ def language_momentum(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Upstream warehouse error"
         ) from e
 
+    response.headers["X-Cache"] = "hit" if hit else "miss"
+
     return LanguageMomentumResponse(
         date=day, limit=limit, offset=offset, results=[LanguageMomentumRepo(**row) for row in rows]
     )
@@ -146,7 +152,9 @@ def language_momentum(
 
 @app.get("/leaderboard", response_model=LeaderboardResponse)
 def leaderboard(
+    response: Response,
     client: bigquery.Client = Depends(get_bq_client),
+    cache: QueryCache = Depends(get_query_cache),
     day: date = Query(alias="date", description="Partition date to read"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=50_000),
@@ -156,8 +164,8 @@ def leaderboard(
     sql, params = build_leaderboard_query(date_key, limit, offset)
 
     try:
-        rows = run_query(client, sql, params)
-        print(sum([row["contributions"] for row in rows if "contributions" in row]))
+        rows, hit = cache_run_query(client, sql, params, cache)
+
     except gcp_exceptions.GoogleAPIError as e:
         capped = any(err.get("reason") == "bytesBilledLimitExceeded" for err in e.errors)
 
@@ -170,6 +178,8 @@ def leaderboard(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Upstream warehouse error"
         ) from e
+
+    response.headers["X-Cache"] = "hit" if hit else "miss"
 
     return LeaderboardResponse(
         date=day, limit=limit, offset=offset, results=[LeaderboardActor(**row) for row in rows]

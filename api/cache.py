@@ -3,6 +3,8 @@ import time
 from functools import lru_cache
 from typing import Callable
 
+from google.cloud import bigquery
+
 from api.queries import run_query
 
 
@@ -10,7 +12,7 @@ from api.queries import run_query
 # allows for abandoned keys to never be reclaimed
 # okay for localhost, moved to Redis at scale
 class QueryCache:
-    
+
     # use monotonic to prevent steps backwards;
     # backward step would allow an entry to keep serving past its expiry date
     def __init__(self, ttl: float, clock: Callable[[], float] = time.monotonic):
@@ -20,7 +22,7 @@ class QueryCache:
 
     # expired must call KeyError
     # Shouldn't be able to call a dead key again
-    def get(self, key: tuple[str, tuple[str, ...]]):
+    def get(self, key: tuple[str, tuple[str, ...]]) -> list[dict]:
         expires_at, rows = self._store[key]
 
         if self._clock() >= expires_at:
@@ -29,7 +31,7 @@ class QueryCache:
             raise KeyError(key)
         return rows
 
-    def set(self, key: tuple[str, tuple[str, ...]], rows: list[dict]):
+    def set(self, key: tuple[str, tuple[str, ...]], rows: list[dict]) -> None:
         expires_at = self._clock() + self.ttl
         self._store[key] = (expires_at, rows)
 
@@ -39,7 +41,12 @@ def get_query_cache() -> QueryCache:
     return QueryCache(300)
 
 
-def cache_run_query(client, sql, params, cache):
+def cache_run_query(
+    client: bigquery.Client,
+    sql: str,
+    params: list[bigquery.ScalarQueryParameter],
+    cache: QueryCache,
+):
 
     dict_key = (sql, tuple(json.dumps(p.to_api_repr(), sort_keys=True) for p in params))
 
