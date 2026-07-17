@@ -16,7 +16,7 @@ Run from the repo root. Before starting, confirm with the user which parts they 
    - `.env` exists at repo root (GCP_PROJECT / BRONZE_BUCKET / SILVER_BUCKET / BQ_DATASET); `terraform/terraform.tfvars` exists. Never print secret values.
    - Docker Desktop is running (`docker info` exits 0).
 2. **Provision:** `terraform -chdir=terraform apply` → expect **9 resources** (2 buckets, 2 datasets, SA + IAM grants). Review the plan before approving.
-3. **Bronze:** `python -c "from ingestion.ingest import ingest_hour; ingest_hour('2024-01-01', 15)"` (host `.venv`; do **not** use `run.py` — it drives the deprecated Counter path). Idempotent: re-run prints "Already in bronze, skipping".
+3. **Bronze:** `python -c "from ingestion.ingest import ingest_hour; ingest_hour('2024-01-01', 15)"` (host `.venv`). Idempotent: re-run prints "Already in bronze, skipping".
 4. **Silver Parquet (Spark):**
    ```
    docker compose -f spark/docker-compose.yaml up -d --build

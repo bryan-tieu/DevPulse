@@ -334,6 +334,11 @@ event_counts.py` is **deprecated, not deleted**: `api/main.py` still reads its `
 table and `run.py` still calls it, so it lives until the Phase 3 API rework moves the API onto
 silver/gold. *(The day's outline sanctioned "delete **or clearly deprecate**"; the live API dependency
 makes deprecate the correct call — a clean delete would silently break the endpoint for no benefit.)*
+**Closed Day 15 (step 6):** the Phase-3 API rework landed — `api/main.py` now serves the gold marts +
+run metadata and the old `/event-counts` endpoint died in the step-2 rewrite — so `transform/
+event_counts.py` + `run.py` were deleted with no live references. The `hourly_event_counts` table
+needed no drop: it stopped being recreated after Day 4 and lived in a dataset `terraform destroy`
+empties nightly.
 
 ### Dev tooling finally tracked: `requirements-dev.txt`
 `ruff`/`black`/`pytest` were configured in `pyproject.toml` but never installed or tracked. Added a
