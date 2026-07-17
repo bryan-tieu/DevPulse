@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 from functools import lru_cache
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from google.api_core import exceptions as gcp_exceptions
+from google.api_core.exceptions import Forbidden, NotFound
 from google.cloud import bigquery
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from api.cache import QueryCache, cache_run_query, get_query_cache
 from api.queries import (
@@ -12,7 +13,7 @@ from api.queries import (
     build_leaderboard_query,
     build_trending_query,
 )
-from config import GCP_PROJECT
+from config import BQ_DATASET, GCP_PROJECT
 
 app = FastAPI(
     title="DevPulse",
@@ -72,6 +73,35 @@ class LeaderboardResponse(BaseModel):
     limit: int
     offset: int
     results: list[LeaderboardActor]
+
+
+class TaskState(BaseModel):
+    task_id: str
+    state: str
+    duration: float | None
+
+
+class PipelineRun(BaseModel):
+    run_id: str
+    logical_date: datetime
+    tasks: list[TaskState]
+    raw_rows: int | None
+    hour_rows: int | None
+    quarantine_rows: int | None
+    residual_rows: int | None
+    recorded_at: datetime
+    verdict: bool | None
+
+
+class RunError(BaseModel):
+    run_id: str
+    reason: str
+
+
+class RunsResponse(BaseModel):
+    limit: int
+    results: list[PipelineRun]
+    errors: list[RunError]
 
 
 @app.get("/trending", response_model=TrendingResponse)
@@ -184,3 +214,58 @@ def leaderboard(
     return LeaderboardResponse(
         date=day, limit=limit, offset=offset, results=[LeaderboardActor(**row) for row in rows]
     )
+
+
+@app.get("/runs", response_model=RunsResponse)
+def runs(
+    client: bigquery.Client = Depends(get_bq_client),
+    limit: int = Query(10, ge=1, le=100),
+) -> RunsResponse:
+
+    TABLE_ID = f"{GCP_PROJECT}.{BQ_DATASET}.pipeline_run_metadata"
+
+    try:
+
+        # at scale, the table grows from just a single cheap read;
+        # partition to ensure we get the rows we actually want at scale
+        rows = list(client.list_rows(TABLE_ID))
+    except NotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Table {TABLE_ID} not found."
+        )
+    except Forbidden:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Missing BigQuery permissions"
+        )
+    except gcp_exceptions.GoogleAPIError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Upstream warehouse error"
+        ) from e
+
+    runs, errors = [], []
+    for row in rows:
+        try:
+            tasks = row["tasks"] if row["tasks"] else []
+            summary = row["run_summary_json"] if row["run_summary_json"] else {}
+
+            run = PipelineRun(
+                run_id=row["run_id"],
+                logical_date=row["logical_date"],
+                recorded_at=row["recorded_at"],
+                tasks=tasks,
+                raw_rows=row["raw_rows"],
+                hour_rows=row["hour_rows"],
+                quarantine_rows=row["quarantine_rows"],
+                residual_rows=row["residual_rows"],
+                verdict=summary.get("pipeline_check"),
+            )
+
+            runs.append(run)
+
+        except ValidationError as e:
+
+            errors.append(RunError(run_id=row["run_id"], reason=repr(e)))
+    runs.sort(key=lambda r: r.recorded_at, reverse=True)
+    runs = runs[:limit]
+
+    return RunsResponse(limit=limit, results=runs, errors=errors)
