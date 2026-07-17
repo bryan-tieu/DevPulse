@@ -958,6 +958,44 @@ proof.
 
 ---
 
+## Day 15 · session 5 — `/runs`: the ops window on the free path (2026-07-17)
+
+### `/runs` serves `list_rows` raw and uncached — the day's cost argument, inverted
+`GET /runs` reads the whole `pipeline_run_metadata` table via **`client.list_rows`** (a free tabledata
+read — job history verified: zero query jobs from the endpoint), sorts in Python on `recorded_at`
+desc, slices to `limit`. Correct exactly while the table is tiny and unpartitioned; when it outgrows
+a single cheap read it earns partitioning and a real query (comment in the endpoint says so). **No
+`QueryCache`, deliberately** — three reasons, strongest last: (1) the cache exists to suppress
+*billed query jobs*; a free read saves nothing. (2) `/runs` is the ops window — a 300 s TTL hides
+exactly the run you opened it to see; the marts are static between pipeline runs, the run history
+changes *because* the pipeline ran. (3) run metadata is the honest invalidation *key* for the mart
+cache (named Day 15 s4) — caching the invalidation signal is circular. `NotFound` is a **routine
+state**, not an exotic failure (every fresh session sits between `terraform destroy` and the first
+run) → its own branch, a deliberate 404 "no run history yet". Malformed rows **fail loudly in-band**:
+per-row parse guard, surfaced in a structured `errors[]` beside `results` — the first "fix" passed
+`errors=` into a response model that had no such field, and **Pydantic silently ignores unknown init
+kwargs**: a silent drop dressed as handled, caught only because the visible `"errors": []` in the
+curl output is part of the contract.
+
+### Finding: the JSON columns arrive parsed — the schema is the contract, not the reviewer's memory
+Coach asserted `tasks`/`run_summary_json` were `STRING` columns needing `json.loads` at the edge.
+`bq show --schema` says **`JSON` type** — the Python client parses them on read (Day 14's loader
+declared them so); the live `TypeError` from `json.loads(list)` was the tell. Third member of the
+"artifact wins" class (Day 14's mounts claim, s1's `date_key`): *check the schema at the boundary
+before writing the boundary.* Corollary: a NULL guard must mimic the **parsed** shape — `else {}`
+for an object column (dict has `.get`), `else []` for an array one; copying the array guard onto
+the object column sent the NULL row to a 500 via `AttributeError`.
+
+### Finding: two tests were born vacuous — mutation is the only proof a test is real
+The newest-first test's fixture was declared already-sorted (input order == expected order → delete
+the sort, test stays green) and the limit test sliced 2 valid rows to `limit=2` (a no-op — delete
+the slice, green again). Both are **copy-paste-drift** (3rd sighting since 07-14 — now the dominant
+defect class). Rules banked: a fixture's declaration order must *disagree* with the expected output
+order; after copying any test, ask "what change would make this fail?" — and answer it mechanically:
+comment out the code under test, demand red, restore, demand green.
+
+---
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
@@ -968,13 +1006,14 @@ also flagged inline against the relevant phases in `CLAUDE.md`. Goal stated by m
 - **Parameterized queries (Phase 3).** ✅ **Closed Day 15 s2** — `api/queries.py` (every value a
   bound param, identifiers from config only) is now the *only* SQL assembly point: the s2 rewrite
   of `api/main.py` deleted the old f-string `/event-counts` endpoint. `transform/event_counts.py`
-  + `run.py` (dead code, no SQL surface) fall in step 6.
+  + `run.py` (dead code, no SQL surface) deleted Day 15 step 6.
 - **API auth + rate limiting (Phase 3, before any deploy).** The endpoint is unauthenticated. Fine
   on localhost; once on Cloud Run an open endpoint over BigQuery is both data exposure and a
   **billing-DoS** (each request runs a paid query job). Add auth (API key / Cloud Run IAM) + limits.
 - **`maximum_bytes_billed` cap (Phase 3).** ✅ **Landed Day 15 s1**: `run_query` stamps
-  `maximum_bytes_billed=100_000_000` on every `QueryJobConfig`, pinned by a unit test. Remaining:
-  the old `/event-counts` path (dies in step 2) and any future ad-hoc query jobs.
+  `maximum_bytes_billed=100_000_000` on every `QueryJobConfig`, pinned by a unit test. The old
+  `/event-counts` path died in s2; `/runs` (s5) needs no cap — `list_rows` runs no query job.
+  Remaining: any future ad-hoc query jobs.
 - **CORS (Phase 3).** When the dashboard calls the API, configure CORS deliberately — never
   `allow_origins=["*"]` together with credentials.
 - **Dependency pinning (Phase 3 CI).** `requirements.txt` is unpinned (Terraform is pinned + locked

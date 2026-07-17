@@ -112,3 +112,21 @@ surface we accept for local dev); gigabytes of images for kilobytes of code.
 **When the alternative wins:** one well-pinned venv wins for a solo, short-lived project with compatible deps —
 it's what every step before Day 8 used happily. **Steelman aloud:** *"Isolation is insurance — I bought it after
 paying the deductible once; a solo project with stable deps could reasonably self-insure."*
+
+## FastAPI directly over BigQuery (serving) — vs a serving DB (Postgres/Redis), vs a BI tool
+
+**Buys:** zero new infrastructure — the warehouse the pipeline already fills is the only store, and the dbt
+marts stay the single source of computed truth ("the warehouse computes, the API serves": endpoints do filter +
+order + paginate, never aggregate); the whole cost surface is a parameterized, byte-capped query layer plus a
+free `list_rows` ops path; a TTL cache absorbs repeat traffic for pennies.
+**Costs:** every mart request is a **billed query job** with warehouse latency (seconds, and a 10 MB billing
+floor) — BigQuery is a scan engine, not a point-lookup store (no indexes, no connection pooling); the in-process
+cache is per-worker (two uvicorn workers = two caches); auth + rate limiting are still owed before any deploy —
+an open endpoint over BQ is a **billing-DoS** surface.
+**When the alternative wins:** a serving DB wins the moment traffic is real — user-facing p95s, high QPS, deep
+pagination (keyset over an index), per-request cost that must round to zero. The shape is reverse ETL: dbt
+publishes the marts *into* Postgres (or hot keys into Redis) and BigQuery goes back to being the compute tier —
+and the API's existing seams (pure builders + injected client) are exactly where that swap lands without
+rewriting endpoints. A BI tool (Metabase/Looker) wins when the consumers are analysts, not applications.
+**Steelman aloud:** *"At localhost scale the warehouse doubles as the serving layer for pennies; the day this
+fronts real traffic, the marts get published into a serving DB and the code seam for that swap already exists."*
