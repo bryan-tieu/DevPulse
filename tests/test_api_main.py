@@ -6,11 +6,13 @@ run_query. If any test here needs live BigQuery, the dependency injection has
 failed at its one job.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 from google.api_core import exceptions as gcp_exceptions
+from google.api_core.exceptions import NotFound
 
 from api.main import app, get_bq_client
 
@@ -64,6 +66,56 @@ FAKE_LEADERBOARD_ROWS = [
         "actor_login": "octo",
         "contributions": 200,
         "daily_rank": 2,
+    },
+]
+
+FAKE_PIPELINE_RUNS = [
+    {
+        "run_id": "backfill__2024-01-01T15:00:00+00:00",
+        "logical_date": datetime(2024, 1, 1, 15, 0, 0, tzinfo=timezone.utc),
+        "recorded_at": datetime(2026, 7, 17, 19, 5, 11, 0, tzinfo=timezone.utc),
+        "tasks": [],
+        "raw_rows": None,
+        "hour_rows": None,
+        "quarantine_rows": None,
+        "residual_rows": None,
+        "run_summary_json": None,
+    },
+    {
+        "run_id": "scheduled__2024-01-01T14:00:00+00:00",
+        "logical_date": datetime(2024, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+        "recorded_at": datetime(2026, 7, 17, 20, 20, 29, 187342, tzinfo=timezone.utc),
+        "tasks": [
+            {"task_id": "ingest", "state": "success", "duration": 0.425572},
+            {"task_id": "silver_transform", "state": "success", "duration": 44.564916},
+            {"task_id": "dbt_build", "state": "success", "duration": 32.261428},
+        ],
+        "raw_rows": 180387,
+        "hour_rows": 180386,
+        "quarantine_rows": 0,
+        "residual_rows": 1,
+        "run_summary_json": {
+            "pipeline_check": True,
+            "raw_rows": 180387,
+            "hour_rows": 180386,
+            "quarantine_rows": 0,
+            "residual_rows": 1,
+            "partition_hour": 15,
+        },
+    },
+    {
+        "run_id": "scheduled__2024-01-01T13:00:00+00:00",
+        "logical_date": datetime(2024, 1, 1, 13, 0, 0, tzinfo=timezone.utc),
+        "recorded_at": datetime(2026, 7, 17, 18, 0, 0, 0, tzinfo=timezone.utc),
+        "tasks": [
+            {"task_id": "ingest", "state": "success", "duration": 0.4},
+            {"state": "success", "duration": 1.2},  # <-- no task_id
+        ],
+        "raw_rows": 42,
+        "hour_rows": 42,
+        "quarantine_rows": 0,
+        "residual_rows": 0,
+        "run_summary_json": {"pipeline_check": False},
     },
 ]
 
@@ -330,3 +382,92 @@ def test_leaderboard_deep_offset(client, bq_mock):
     assert resp.status_code == 200
     bound = {p.name: p.value for p in job_config.query_parameters}
     assert bound["offset"] == 30_000
+
+
+def test_newest_first_runs(client, bq_mock):
+    bq_mock.list_rows.return_value = FAKE_PIPELINE_RUNS
+
+    resp = client.get("/runs", params={"limit": 10})
+
+    body = resp.json()
+
+    assert [r["run_id"] for r in body["results"]] == [
+        "scheduled__2024-01-01T14:00:00+00:00",
+        "backfill__2024-01-01T15:00:00+00:00",
+    ]
+
+
+def test_limit_slices(client, bq_mock):
+    bq_mock.list_rows.return_value = FAKE_PIPELINE_RUNS
+
+    resp = client.get("/runs", params={"limit": 1})
+
+    body = resp.json()
+
+    assert [r["run_id"] for r in body["results"]] == ["scheduled__2024-01-01T14:00:00+00:00"]
+
+
+def test_null_row_served(client, bq_mock):
+    bq_mock.list_rows.return_value = FAKE_PIPELINE_RUNS
+
+    resp = client.get("/runs", params={"limit": 10})
+
+    body = resp.json()
+    error_ids = [r["run_id"] for r in body["errors"]]
+    assert "backfill__2024-01-01T15:00:00+00:00" not in error_ids
+
+    run_ids = [r["run_id"] for r in body["results"]]
+    assert "backfill__2024-01-01T15:00:00+00:00" in run_ids
+
+    null_row = next(
+        r for r in body["results"] if r["run_id"] == "backfill__2024-01-01T15:00:00+00:00"
+    )
+
+    assert null_row["verdict"] is None
+    assert null_row["tasks"] == []
+    assert null_row["raw_rows"] is None
+    assert null_row["hour_rows"] is None
+    assert null_row["quarantine_rows"] is None
+    assert null_row["residual_rows"] is None
+
+
+def test_malformed_row_to_error(client, bq_mock):
+    bq_mock.list_rows.return_value = FAKE_PIPELINE_RUNS
+
+    resp = client.get("/runs", params={"limit": 10})
+
+    body = resp.json()
+
+    run_ids = [r["run_id"] for r in body["results"]]
+    bad_row = next(
+        e for e in body["errors"] if e["run_id"] == "scheduled__2024-01-01T13:00:00+00:00"
+    )
+    assert "backfill__2024-01-01T15:00:00+00:00" in run_ids
+
+    assert "scheduled__2024-01-01T13:00:00+00:00" == bad_row["run_id"]
+    assert bad_row["reason"]
+
+
+def test_no_query_only_list_rows(client, bq_mock):
+    bq_mock.list_rows.return_value = []
+
+    resp = client.get("/runs")
+
+    assert resp.status_code == 200
+    bq_mock.list_rows.assert_called_once()
+    bq_mock.query.assert_not_called()
+
+
+def test_missing_table_is_404(client, bq_mock):
+    bq_mock.list_rows.side_effect = NotFound("Table not found")
+
+    resp = client.get("/runs")
+
+    assert resp.status_code == 404
+    bq_mock.query.assert_not_called()
+
+
+def test_invalid_limit(client):
+    resp = client.get("/runs", params={"limit": 101})
+
+    assert resp.status_code == 422
