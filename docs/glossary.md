@@ -246,6 +246,12 @@
 
 **Singleton vs per-request scope (DI)** — What a `Depends` provider returns per call. `@lru_cache` on the provider = one shared instance (required for a cache: a fresh-per-request cache structurally cannot hit — nothing errors, `X-Cache: hit` just never appears). The flip side in tests: a session-wide singleton leaks state *between tests* — DevPulse resets it with an autouse `conftest.py` fixture (`get_query_cache.cache_clear()`), chosen over per-test overrides so isolation can't be forgotten in the next test file. Both failure modes were hit live on Day 15 s4.
 
+**Free read path (`tabledata.list` / `client.list_rows`)** — BigQuery's storage-read API: streams a table's *stored rows* directly (a lazy `RowIterator` — the network call fires at iteration, not at the `list_rows()` call), runs **no query job**, bills **nothing** at any table size. No `WHERE`/`ORDER BY`/aggregation — the moment you need "the newest 10," you need a query job (and the 10 MB minimum). DevPulse: `/runs` rides it end-to-end (zero jobs in job history, proven Day 15 s5); its costs are physics, not dollars — transfer + memory + a Python sort that grow with the table. `JSON`-type columns arrive **already parsed** (the client library runs the deserialization per row).
+
+**Reverse ETL** — Publishing *finished* warehouse tables (the marts) outward into an operational store — Postgres for an API, Redis for hot keys — so the warehouse stays the compute tier and serving reads get index-cheap. Named-not-built in DevPulse: it's the migration path if the API ever fronts real traffic, and the existing seams (pure builders in `api/queries.py`, injected client) are where the swap lands.
+
+**Keyset pagination** — Paging by "everything after the last key I saw" (`WHERE (rank, id) > (:last_rank, :last_id) ORDER BY … LIMIT n`) instead of `OFFSET`, which must *produce and discard* every skipped row on each request. Needs a deterministic unique sort key (the same tiebreaker rule DevPulse's ORDER-BY pagination already enforces). Named-not-built: the deep-page fix in a serving DB with indexes; in BigQuery, OFFSET doesn't change bytes scanned anyway — pagination shapes the payload, not the bill.
+
 ## Security & credentials
 
 **ADC (Application Default Credentials)** — Google's mechanism for discovering credentials from the environment (`gcloud auth application-default login` → a short-lived user token). DevPulse authenticates **keyless** via ADC everywhere (Terraform, Spark, Airflow, dbt), bind-mounted read-only into containers — **no SA key on disk**.
