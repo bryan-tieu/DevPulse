@@ -1,0 +1,9 @@
+# Dashboard deps — installed into .venv-dashboard, NOT the pipeline .venv.
+# Streamlit drags in pandas/pyarrow/altair/tornado/protobuf; protobuf in
+# particular is a live conflict risk next to google-cloud-*. Same reasoning
+# that gave dbt its own image on Day 8 — cheapest isolation that works.
+#
+#   py -m venv .venv-dashboard
+#   .\.venv-dashboard\Scripts\python.exe -m pip install -r dashboard/requirements.txt
+streamlit
+requests

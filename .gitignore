@@ -1,4 +1,6 @@
 .venv/
+# dashboard runs in its own venv (streamlit's deps stay away from google-cloud-*)
+.venv-dashboard/
 __pycache__/
 *.pyc
 .env
