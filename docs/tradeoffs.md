@@ -130,3 +130,81 @@ and the API's existing seams (pure builders + injected client) are exactly where
 rewriting endpoints. A BI tool (Metabase/Looker) wins when the consumers are analysts, not applications.
 **Steelman aloud:** *"At localhost scale the warehouse doubles as the serving layer for pennies; the day this
 fronts real traffic, the marts get published into a serving DB and the code seam for that swap already exists."*
+
+## dbt incremental `merge` (the fact) — vs `insert_overwrite`, vs full-refresh every build
+
+**Buys:** correctness keyed to *identity*, not discipline — an upsert on `unique_key='event_id'` cannot duplicate
+no matter what window gets reprocessed (late-arriving data, overlapping backfills, a nervous re-run); the grain
+guard and `on_schema_change='fail'` ride along.
+**Costs:** MERGE scans the *target* to find matches — measured honestly: the second build scanned **more** than
+the full rebuild (**8.5 → 40.4 MiB**; one partition + full-hour lookback = nothing to prune); and a merge
+**cannot subtract** — rows in the target but absent from the source are invisible to it, so bad-data cleanup
+needs `--full-refresh` (Day 12, learned live).
+**When the alternative wins:** `insert_overwrite` wins for immutable event data whose loads always align to
+partition boundaries — replace partitions wholesale, never scan the target; arguably the textbook fit for *this*
+data. Full-refresh-every-build wins while the table is small enough that rebuild ≈ merge cost (ours is — measured).
+**Steelman aloud:** *"insert_overwrite is probably the textbook choice for immutable events; I chose merge to make
+correctness unconditional on my partition discipline, measured that it scans more at my scale, and banked exactly
+when that tradeoff flips."*
+
+## Committed enrichment seed (`repo_languages`) — vs a live GitHub-API metadata source
+
+**Buys:** zero credentials, rate limits, or network in the build; deterministic and reviewable (the seed is a
+diffable CSV); the mart reads it via `ref()`, so swapping in a real source later never touches the SQL.
+**Costs:** hand-authored → *cannot* be accurate — the banked finding: a single-hour firehose is dominated by
+opaque bot/automation repos no human can label by inspection (4 matched repos; 178,081 events `Unknown`); static
+while reality drifts; needed `column_types` pinning to survive the join.
+**When the alternative wins:** the real repos-API source wins the moment coverage or freshness matters — that's
+its own small pipeline (ingestion, refresh cadence, rate-limit budget), which is exactly the cost the seed defers.
+**Steelman aloud:** *"The seed is an honest stand-in: it proved the LEFT-join + COALESCE shape with 4 repos, and
+its failure to cover bot-dominated data is itself the measured argument for real API enrichment at scale."*
+
+## Free BigQuery paths everywhere (load jobs in, `list_rows` out) — vs streaming inserts, vs query jobs
+
+**Buys:** the pipeline's entire write path (Parquet loads, `load_table_from_json` run metadata) and its ops read
+path (`/runs` via `tabledata.list`) bill **zero** — proven from job history; batch load semantics match the
+hourly grain exactly.
+**Costs:** load jobs are batch-latency (seconds-to-visible, fine here); `tabledata` reads have no `ORDER BY`/
+filter — read-all-then-sort whose *physical* costs (transfer, memory, sort) grow with the table even though the
+bill stays zero.
+**When the alternative wins:** streaming inserts win when sub-second availability is the product (Phase 4's
+stretch shape) — you pay per-MB and inherit dedupe complexity. A query job wins the moment you need "the newest
+10 of a million" — and that switch flips `/runs` into a billed endpoint that then *earns* the TTL cache it
+deliberately lacks today.
+**Steelman aloud:** *"Cost-aware engineering here meant knowing which BigQuery* API *each byte rides, not just
+what the data is; every path is free because the grain is hourly batch, and I know which knob starts billing the
+day the grain changes."*
+
+## Webhook alerting (`on_failure_callback` → POST) — vs email/SMTP, vs PagerDuty-class tooling
+
+**Buys:** one pure function + `requests.post` with a timeout (an alert path that can hang its patient is a bug);
+lands where the human already looks; composes with retry routing so it pages once, after retries exhaust, same
+minute as a gate failure (measured: 11 min → seconds).
+**Costs:** no escalation, acknowledgment, or dedup windows; the URL is a secret currently living in `.env`
+(secrets backend deferred to Phase 4); delivery is best-effort — a failed POST is logged, not retried.
+**When the alternative wins:** PagerDuty/Opsgenie win the moment more than one human is on call — escalation
+policies and ack tracking are the product; email wins never (it's where alerts go to be ignored).
+**Steelman aloud:** *"A webhook is the smallest alert that actually interrupts a human; the day this has an
+on-call rotation, the callback body stays and the destination becomes PagerDuty — the routing logic is the part
+I built, and it transfers."*
+
+## Streamlit dashboard **through the API** — vs Streamlit straight to BigQuery, vs Looker Studio, vs a React SPA
+
+**Buys:** one guarded door to the warehouse — bound parameters, `maximum_bytes_billed`, deterministic `ORDER BY`
+and the TTL cache all stay in `api/`, and the dashboard structurally cannot bypass them (enforced: no `bigquery`
+import, no SQL string under `dashboard/`); the dashboard holds **no credentials at all**; Python end-to-end with
+no JS toolchain; an HTTP client with a real test seam (fake transport, zero live API).
+**Costs:** an extra hop and a serialization round-trip; Streamlit re-executes the whole script on every widget
+interaction, so caching is load-bearing architecture rather than polish — and it **stacks** with the API's TTL,
+making worst-case staleness the *sum* of the two while a refresh button clears only the near layer; single
+process, single user, no auth, no horizontal story.
+**When the alternative wins:** *Streamlit → BQ directly* wins when the dashboard is the only consumer and no API
+exists — one hop, nothing to keep in sync (it loses the moment a second consumer appears). *Looker Studio / any
+BI tool* wins for business users needing self-serve exploration and scheduled delivery with **no code to
+maintain** — the right answer at a company, and the wrong one here precisely because it would connect straight to
+BQ and skip the API, leaving nothing engineered to defend. *A React SPA* wins for real product UX, mobile, or
+public traffic — at the price of a JS stack that teaches nothing about data engineering.
+**Steelman aloud:** *"The dashboard is a consumer of my API, not a second client of my warehouse — everything
+that makes warehouse access safe sits behind one door, and a second `bigquery.Client` would be an uncapped,
+unparameterized path plus a copy of my SQL that drifts. Streamlit is honest for one developer on localhost; the
+at-scale shape is a real frontend against an authenticated, rate-limited API, and that seam already exists."*

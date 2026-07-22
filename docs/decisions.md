@@ -996,6 +996,85 @@ comment out the code under test, demand red, restore, demand green.
 
 ---
 
+## Day 16 · session 1 — the dashboard's API client (2026-07-21) — partial; day continues
+
+### The dashboard consumes the API, never BigQuery directly
+Everything that makes warehouse access safe lives in `api/queries.py` and `api/cache.py`: bound
+parameters, `maximum_bytes_billed`, deterministic `ORDER BY`, the TTL. A dashboard with its own
+`bigquery.Client` would be a **second, uncontrolled path to the warehouse** — uncapped,
+unparameterized, uncached — plus a second copy of SQL guaranteed to drift from the API's. One door,
+guarded. Enforced mechanically: `grep -rn "bigquery\|SELECT" dashboard/` must return nothing.
+**When the alternatives win:** *Streamlit → BQ directly* wins when the dashboard is the **only**
+consumer and no API exists (one hop, no serialization tax, nothing to keep in sync — it loses the
+moment a second consumer appears). *Looker Studio / a BI tool* wins for business users needing
+self-serve exploration and scheduled delivery with **no code to maintain** — genuinely the right
+call at a company, and the wrong one here precisely because it would connect straight to BQ and skip
+the API, leaving nothing engineered to defend. *A React SPA* wins when you need real product UX or
+public traffic; it costs a JS toolchain that teaches nothing about data engineering.
+
+### Streamlit gets a second host venv (`.venv-dashboard`), not a container
+`pip install streamlit` pulled **protobuf 7.35.1, pyarrow 24.0.0, pandas 3.0.3** — protobuf in
+particular is a live conflict risk next to `google-cloud-*`. Same reasoning that gave dbt its own
+image on Day 8 (its deps broke the shared venv — a real conflict, not a precaution), but the
+cheapest isolation that works. **Rejected: a Docker service mirroring dbt exactly.** On Windows a
+container reaching a host API needs `host.docker.internal` **and** forces `uvicorn` off `127.0.0.1`
+onto `0.0.0.0` — widening an unauthenticated, BigQuery-backed API from loopback to the LAN. That is
+a real security regression bought for zero learning. **When the container wins:** once the API is
+itself containerized and authenticated (post-CI), the compose service becomes the correct shape.
+
+### One domain error type, carrying the status code; translation at `_get`, not the wrappers
+`DashboardError` is the only exception a panel ever catches — `requests` exceptions never escape
+`api_client.py`. The day a `requests`-shaped error reaches a render function, the UI has silently
+coupled itself to the transport library. Carrying `status_code` (defaulting to `None` for transport
+failures, which have no response) lets a panel distinguish a routine `404` on `/runs` from a real
+`502`. Translating inside `_get` rather than in each wrapper means **adding a fifth endpoint costs
+one line**. The two failure categories are not symmetric and can't share one `except`: a transport
+failure has no status and no body (the exception type is all you know), while a bad status has both
+— and the body carries the `detail` FastAPI put there.
+
+### Timeouts: split `(connect, read)`, per-endpoint, and measured rather than guessed
+A timeout is not a tuning knob — it converts an **unbounded hang into a bounded, reportable
+failure**. `requests` has no default, so omitting it means a dead socket freezes the UI forever with
+nothing to alert on. Measured on localhost before choosing: mart endpoints **878–1183 ms cold /
+11–13 ms warm**; `/runs` a flat **179–216 ms**. Chose `DEFAULT_TIMEOUT = (1, 6)` and
+`RUNS_TIMEOUT = (1, 3)` — connect is loopback (a handshake that slow means nothing is listening),
+read covers a cold-cache BigQuery query job. `/runs` earns a tighter bound because it rides
+`list_rows` and can **never** run a query job, so slow means wrong, not cold. **Rejected:** a single
+constant (conflates two different failures) and full per-endpoint constants (three of four endpoints
+share a profile — ceremony with no defensible "why"). **Honest limit:** three samples is a median,
+not a tail; real sizing needs many samples under load, and these numbers carry no network RTT.
+
+### Negative finding — the dashboard's timeout is the *only* bound in the chain
+The API sets **no timeout on its own BigQuery calls**. A hung query job would hang the endpoint
+indefinitely; the only thing bounding the whole chain today is the client timeout added here. Client
+timeouts should always be shorter than the upstream's — here there is no upstream one to be shorter
+than. Backlogged.
+
+### Measured — the API's TTL cache is worth ~75–92×, and `/runs` proves it is uncached
+Cold vs warm: `/leaderboard` 1183 → 12.8 ms (~92×), `/trending` 915 → 12.5 (~73×),
+`/languages/momentum` 878 → 11.4 (~77×). `/runs` shows **no cold/warm split at all** across four
+samples — an independent confirmation that the Day-15 s5 "deliberately uncached" decision is
+actually in force. Measurement caveat worth keeping: the ~12 ms warm figure is mostly `curl.exe`
+process startup, so the true cache hit is sub-millisecond and the real ratio is larger.
+
+### Incidental — FastAPI silently accepts unknown query parameters
+`GET /runs?date=2024-01-01&limit=100` returned **200** and ignored `date`, which `/runs` doesn't
+declare. FastAPI does not reject undeclared query params by default. Harmless here, but the general
+lesson matters: *"the API accepted my parameter" is not evidence it used it* — the same class as a
+test that passes for the wrong reason.
+
+### Open question, deliberately not yet documented as fact — does PERMISSIVE silently drop bad lines?
+Raised during `/quiz`, **not verified**. The claim to test: Spark's JSON reader in `PERMISSIVE` mode
+(the default, which `silver_events.py` never overrides) populates `_corrupt_record` **only if that
+column is declared in the schema** — and `SCHEMA` does not declare it, in which case unparseable
+lines are *dropped during parsing*. If true, the read boundary violates "never drop silently," and
+the only thing that would catch it is the GE counted identity (`180,387 = 180,386 + 0 + 1`) failing
+to balance — detection by arithmetic one layer later, not refusal at the door. Also clarified in the
+same session: an explicit schema **imposes** a shape, it does not compare or validate, so a *renamed*
+upstream field yields well-typed NULLs with no error. **Experiment queued:** a three-line local
+`.json.gz` (good row / truncated JSON / valid-JSON-wrong-type), read with `SCHEMA`, count predicted
+before running; then re-read with `_corrupt_record` declared, then with `mode="FAILFAST"`.
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless

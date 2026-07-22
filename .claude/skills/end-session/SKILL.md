@@ -18,10 +18,11 @@ Work through this in order. Skipping a step is allowed only if you tell the user
 
 1. **Day log** — check off the done-criteria boxes in `docs/daily/day-NN.md` that were actually met; note anything deferred.
 2. **`docs/decisions.md`** — one entry per non-obvious choice made today: the decision, why, the rejected alternative, what changes at scale. Include honest negative findings.
-3. **`docs/history.md`** — append one Day-NN entry (dense paragraph, same style as existing entries: what landed, the key numbers, PASS counts, gotchas banked).
-4. **`CLAUDE.md` → Current status** — rewrite the ≤15-line block: phase, last completed day (link), next up, known issues, open decisions. **Narrative goes to history.md, not here.** Update Reference values / Milestones checkboxes if they changed.
-5. **`docs/glossary.md`** — add any new term introduced today (definition + how it's used here).
-6. **`docs/skills-map.md`** — flip any skill newly exercised/proven and add its evidence.
+3. **`docs/tradeoffs.md`** — promote any new "chose X over Y" from today's decisions into a steelman entry (Buys / Costs / When the alternative wins / Steelman aloud). Not every decision qualifies — only ones an interviewer could attack ("why not Y?"). This file feeds `/quiz`; a decision that never gets promoted here is one Bryan blanks on later. *(Added 2026-07-17 after five days of decisions accumulated unpromoted.)*
+4. **`docs/history.md`** — append one Day-NN entry (dense paragraph, same style as existing entries: what landed, the key numbers, PASS counts, gotchas banked).
+5. **`CLAUDE.md` → Current status** — rewrite the ≤15-line block: phase, last completed day (link), next up, known issues, open decisions. **Narrative goes to history.md, not here.** Update Reference values / Milestones checkboxes if they changed.
+6. **`docs/glossary.md`** — add any new term introduced today (definition + how it's used here).
+7. **`docs/skills-map.md`** — flip any skill newly exercised/proven and add its evidence.
 
 ## 3. Teardown (cost hygiene — never skip silently)
 
