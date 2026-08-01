@@ -2,7 +2,15 @@ import datetime
 from datetime import date
 
 import streamlit as st
-from api_client import DashboardError, get_language_momentum, get_leaderboard, get_trending
+
+from dashboard.api_client import (
+    DashboardError,
+    get_language_momentum,
+    get_leaderboard,
+    get_runs,
+    get_trending,
+)
+from dashboard.transforms import mask_nulls, split_unknown
 
 st.set_page_config(
     page_title="DevPulse",
@@ -19,7 +27,7 @@ user_date_input = st.sidebar.date_input("Select a date: ", value=datetime.date(2
 user_limit_input = st.sidebar.slider("Limit: ", min_value=1, max_value=100, value=1)
 
 
-def _build_panel(
+def _build_ranked_panel(
     fetch,
     day: date,
     limit: int,
@@ -42,20 +50,16 @@ def _build_panel(
         # totals
         if unknown_bucket:
             col, sentinel = unknown_bucket
-            chart_rows = [r for r in rows if r[col] != sentinel]
-            total = sum(r[y] for r in rows)
-            unknown = total - sum(r[y] for r in chart_rows)
-            share = unknown / total if total else 0
+            split = split_unknown(rows, col, sentinel, y)
+
+            chart_rows = split.chart_rows
+            total = split.total
+            unknown = split.unknown
+            share = split.share
         else:
             chart_rows = rows
 
-        # `—` goes to the table only — the chart needs the numeric rows, and a
-        # string in a charted column breaks it. NULL here means the day-over-day
-        # window is degenerate (one ingested hour), not that the delta is zero.
-        table_rows = [
-            {**r, **{c: ("—" if r.get(c) is None else r[c]) for c in display_null_cols}}
-            for r in rows
-        ]
+        table_rows = mask_nulls(rows, display_null_cols)
         st.dataframe(table_rows)
 
         if not chart_rows and unknown_bucket:
@@ -74,7 +78,58 @@ def _build_panel(
         st.error(str(e))
 
 
-PANELS = [
+def _build_runs_panel(limit: int = 10) -> None:
+
+    st.header("Pipeline Status")
+
+    try:
+        resp = get_runs(limit)
+
+        result = resp["results"]
+        errors = resp["errors"]
+
+        if not result:
+            st.info("No runs available")
+            return
+
+        if errors:
+            for error in errors:
+                st.warning(f"Malformed row: Run ID: {error['run_id']}. {error['reason']}")
+
+        newest_run_block = result[0]
+
+        if newest_run_block["verdict"] is True:
+            st.caption("Passed")
+        elif newest_run_block["verdict"] is False:
+            st.caption("Failed")
+        else:
+            st.caption("Unknown ")
+
+        st.caption(newest_run_block["run_id"])
+        st.caption(f"Logical date: {newest_run_block['logical_date']}")
+        st.caption(f"Recorded at: {newest_run_block['recorded_at']}")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric(label="raw", value=newest_run_block["raw_rows"])
+        col2.metric(label="hour", value=newest_run_block["hour_rows"])
+        col3.metric(label="quarantine", value=newest_run_block["quarantine_rows"])
+        col4.metric(label="residual", value=newest_run_block["residual_rows"])
+
+        st.subheader("Tasks")
+        st.dataframe(newest_run_block["tasks"])
+
+        st.header("Run History")
+        st.dataframe(result)
+
+    except DashboardError as e:
+        if e.status_code == 404:
+            st.info("No pipeline runs recorded yet")
+        else:
+            st.error(str(e))
+
+
+RANKED_PANELS = [
     dict(fetch=get_trending, x="repo_name", y="stars", label="trending"),
     dict(fetch=get_leaderboard, x="actor_login", y="contributions", label="leaderboard"),
     dict(
@@ -87,5 +142,7 @@ PANELS = [
     ),
 ]
 
-for panel in PANELS:
-    _build_panel(day=user_date_input, limit=user_limit_input, **panel)
+for panel in RANKED_PANELS:
+    _build_ranked_panel(day=user_date_input, limit=user_limit_input, **panel)
+
+_build_runs_panel()
