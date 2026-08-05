@@ -10,7 +10,7 @@ from dashboard.api_client import (
     get_runs,
     get_trending,
 )
-from dashboard.transforms import mask_nulls, split_unknown
+from dashboard.transforms import SchemaError, mask_nulls, split_unknown
 
 st.set_page_config(
     page_title="DevPulse",
@@ -65,9 +65,10 @@ def _build_ranked_panel(
         if not chart_rows and unknown_bucket:
             st.info(f"No known language data available for {day}")
         else:
+            st.header(f"{label.capitalize()} chart for {day}")
             st.bar_chart(chart_rows, x=x, y=y)
 
-        if unknown_bucket and chart_rows:
+        if unknown_bucket and unknown > 0:
             st.caption(
                 f"Of the languages shown, Unknown is {share:.1%} "
                 f"of events ({unknown:,} of {total:,}); "
@@ -76,6 +77,10 @@ def _build_ranked_panel(
 
     except DashboardError as e:
         st.error(str(e))
+    # A separate clause on purpose: a transport failure is an outage the
+    # operator waits out, a schema mismatch is a bug someone has to fix.
+    except SchemaError as e:
+        st.error(f"Dashboard bug — {e}")
 
 
 def _build_runs_panel(limit: int = 10) -> None:
@@ -88,22 +93,23 @@ def _build_runs_panel(limit: int = 10) -> None:
         result = resp["results"]
         errors = resp["errors"]
 
-        if not result:
-            st.info("No runs available")
-            return
+        for error in errors:
+            st.warning(f"Malformed row: Run ID: {error['run_id']}. {error['reason']}")
 
-        if errors:
-            for error in errors:
-                st.warning(f"Malformed row: Run ID: {error['run_id']}. {error['reason']}")
+        if not result:
+
+            # Empty because of unparseable runs, Not because of failures
+            st.info("No readable runs could be parsed")
+            return
 
         newest_run_block = result[0]
 
         if newest_run_block["verdict"] is True:
-            st.caption("Passed")
+            st.header("Passed")
         elif newest_run_block["verdict"] is False:
-            st.caption("Failed")
+            st.header("Failed")
         else:
-            st.caption("Unknown ")
+            st.header("Unknown")
 
         st.caption(newest_run_block["run_id"])
         st.caption(f"Logical date: {newest_run_block['logical_date']}")
