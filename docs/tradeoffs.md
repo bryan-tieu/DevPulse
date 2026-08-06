@@ -208,3 +208,28 @@ public traffic — at the price of a JS stack that teaches nothing about data en
 that makes warehouse access safe sits behind one door, and a second `bigquery.Client` would be an uncapped,
 unparameterized path plus a copy of my SQL that drifts. Streamlit is honest for one developer on localhost; the
 at-scale shape is a real frontend against an authenticated, rate-limited API, and that seam already exists."*
+
+## TTL caching **vs. event-based invalidation** (the `run_id` key) — and caches in series
+
+**Buys:** a TTL is one number and zero coordination — no new API parameter, no token to thread, no contract
+change; it bounds staleness without knowing anything about the data. Stacked in front of the API's own TTL it
+turns Streamlit's re-run model (a fresh script execution on every widget interaction) from a per-fidget bill
+into a per-window one, which is the difference between a cost control and a UI that meters money.
+**Costs:** a TTL is *uncorrelated with the event it approximates*, so it is wrong in both directions at once —
+it refetches identical data ~12 times an hour between hourly runs, **and** serves stale rows for up to the full
+window at the exact moment new data lands. Caches in series make worst-case staleness the **sum** of the TTLs
+(~600 s for the marts here, vs 30 s for `/runs`, which has only one layer), and a refresh button clears only
+the layer it owns — so the control that promises freshness demonstrably cannot deliver it. In-process caches
+also don't survive horizontal scaling: `clear()` empties whichever replica served the click.
+**When the alternative wins:** event-based invalidation wins the moment the update cadence approaches the TTL —
+five-minute micro-batches, or a streaming mart, where the approximation is stale for most of the interval. It
+needs a version token the producer already emits: here that is the newest `run_id` in `pipeline_run_metadata`,
+threaded as an argument so a new run is automatically a new cache key at every layer (the same idea as
+content-hashed asset filenames — never expire, change the key). It cannot invalidate `/runs` itself, since
+`run_id` is what `/runs` returns. A shared cache (Redis) wins over both once there is more than one replica.
+**Steelman aloud:** *"I had two TTLs in series, so worst-case staleness was their sum, not either one — and my
+refresh button only cleared the near layer, which meant it promised freshness it couldn't deliver. TTL was an
+approximation of an invalidation signal I actually had: the pipeline writes its own run metadata, so the newest
+run_id is an exact version key I could thread through both layers. I didn't build it, because at hourly batch
+the approximation error is invisible and the change spans three layers — but the trigger is when the update
+cadence gets near the TTL."*

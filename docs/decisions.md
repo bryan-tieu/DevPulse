@@ -610,6 +610,34 @@ can't tell their language from the name, and guessing would fabricate data — s
 rest correctly fall to `'Unknown'`. This is the concrete argument for a real GitHub-API enrichment source (authoritative
 `.language`) over a hand-authored file — not a gap in the build, but the honest reason the seed is a stand-in.
 
+### At scale — how the real enrichment source would be built (design banked 2026-07-22, deferred)
+Raised on Day 16 when the dashboard made the 98.7% `Unknown` bucket visible. The 4-row seed is a **deferred-scope
+simplification, not an unsolved problem** — the real design is understood, it's just out of today's lesson (which is the
+*join mechanics*, not the ingestion of a second source). The seed and a real `repo_metadata` table are swap-compatible
+by design: both key on `repo_id`, the mart reads via `ref()`, so replacing one with the other never touches mart SQL.
+The efficient build rests on two levers:
+- **Incremental / fetch-once.** Keep a `repo_metadata` dimension keyed on `repo_id`; each run **anti-join** the run's
+  distinct repos against what's already enriched and fetch **only the new ones**. The repo universe recurs heavily (the
+  popular repos appear nearly every hour), so each is fetched exactly once and steady-state cost decays to the few
+  thousand genuinely-new repos per hour, not 55k. Same idempotent exists-skip instinct as bronze `blob.exists()` / gold
+  merge, applied to an external call — the token/round-trip saved is the payoff.
+- **Batch / GraphQL over REST.** REST `GET /repos/{owner}/{repo}` returns `.language` but is **one repo per call at
+  5,000/hour** — ~11 h to enrich a single hour's 55k repos, i.e. the pipeline falls permanently behind. GitHub GraphQL
+  aliases many repos into one request under a **point-based** limit (~5k points/hr, ~1 pt/query), turning 55k repos into
+  a few hundred requests. This single swap is the difference between "can't keep up" and "trivial."
+
+Honest failure modes the seed hides: deleted repos (404 → record known-null, stop retrying), **renamed** repos
+(`repo_id` stable but `repo_name` isn't, and GraphQL looks up by name — REST follows the rename redirect, GraphQL
+doesn't), empty repos (`language: null` = a *known* null, distinct from not-yet-fetched — the same tri-state honesty as
+`verdict`), and language drift over time (slowly-changing → refresh on a TTL, don't re-fetch every run). **Rejected
+shortcut:** joining `bigquery-public-data.github_repos.languages` — one JOIN, zero code, and genuinely right at a company
+where someone else maintains freshness, but it's a stale static snapshot with no post-snapshot coverage **and** the exact
+category of pre-built-dump shortcut hard rule #3 bans for the event stream; the ingestion engineering is the point.
+**Rejected:** clone-and-run-Linguist (how GitHub itself detects language, by file bytes) — accurate but absurd for bulk
+(clone 55k repos); only if a byte-level breakdown were needed, which the API gives cheaper. **Unlocks:** this fetcher is
+the **first place a GitHub token enters DevPulse** → forces the secrets-backend story (hard rule #4) so far deferred to
+Phase 4, a natural sibling to the Events-API→Kafka work that needs the same token.
+
 ---
 
 ## Day 12 — dbt build as an Airflow DAG gate (2026-07-08)
@@ -1075,6 +1103,162 @@ upstream field yields well-typed NULLs with no error. **Experiment queued:** a t
 `.json.gz` (good row / truncated JSON / valid-JSON-wrong-type), read with `SCHEMA`, count predicted
 before running; then re-read with `_corrupt_record` declared, then with `mode="FAILFAST"`.
 
+---
+
+## Day 16 · sessions 2–3 — the panels, honest states, and two caches (2026-07-22 → 2026-08-05)
+
+### The `Unknown` bucket is shown and labelled — never filtered
+`Unknown` is **178,081 of 180,386 events (98.7%)**: the enrichment seed covers the repos it covers, and
+`language_momentum` LEFT-joins with `COALESCE('Unknown')` precisely so those events are not dropped. Charted
+naïvely, one bar *is* the chart. **Rejected: filtering `Unknown` out of the visualisation** — that is the
+INNER-join lie relocated to the presentation layer, and the number a viewer reads would silently exclude 98.7%
+of reality. **Chosen:** the table keeps every row; the chart narrows to resolved languages; an adjacent caption
+states the share and the counts. The caption is **page-scoped, not day-scoped** ("of the languages shown"),
+because the API exposes no day-level total and computing one client-side would violate
+warehouse-computes/dashboard-displays. Gated on `unknown > 0` rather than on "are there bars to draw" — the
+first version hid the disclosure exactly when `Unknown` was 100% of the page, which is when it matters most.
+
+### `errors[]` renders independently of `results` — and "no runs" is on the parse axis
+`/runs` **partitions** its rows: each either builds a `PipelineRun` or lands in `errors[]`. So `results: []`
+with `errors: [n]` is reachable, and it is the most alarming state the endpoint can return — every run record
+corrupt. The first build rendered the errors loop *below* the empty-results guard, which meant that state
+printed "No runs available" and returned: **the in-band error channel turned into `/dev/null` on the exact case
+it exists for.** Errors now render unconditionally, above the guard. The empty message was also on the wrong
+axis: `results` holds runs that **parsed**, not runs that **succeeded** — a `verdict: False` run parses fine and
+renders "Failed" with metrics — so "no successful runs" described a state that cannot occur. Now "No readable
+runs could be parsed." Same tri-state discipline as `verdict` itself (pass / fail / **unknown**, never
+collapsed) and `momentum_delta` (`—`, never `0`).
+
+### A missing key and a NULL value are different failures — `SchemaError`, not `.get()`
+`mask_nulls` originally used `row.get(c) is None`, which collapsed two unrelated conditions into one glyph. A
+NULL `momentum_delta` is a **real data state** (one ingested hour makes the day-over-day window degenerate). An
+**absent column** means the API's response contract moved, or a panel names a column that doesn't exist — and
+`api/main.py` declares `momentum_delta: int | None` as *required*, so Pydantic always serialises it: on the
+wire the key cannot be missing unless something is broken. `.get()` rendered schema drift as `—`, i.e. as data.
+Now `_require_columns()` gates **both** `split_unknown` and `mask_nulls`, so they share one vocabulary, and the
+subscript is `row[c]`. **`SchemaError` is deliberately not a `DashboardError`:** that one means the call failed;
+this means the call succeeded and the body was wrong, and folding a non-HTTP failure into it would make its
+`status_code` meaningless. **Rejected: bare `KeyError`** (Fix 1) — loud and it even names the column, but it
+escapes `except SchemaError` and takes the whole page down with a traceback, its message says "a key was absent"
+rather than what that *means*, and it stops at the first missing column where the guard reports all of them.
+**At scale / the structural fix, named not built:** parse responses into typed objects at the `api_client` seam,
+so shape is validated once at the boundary and no downstream helper has to defend itself individually. Note the
+symmetry — `api/main.py` already does exactly this, and `ValidationError` there is what routes malformed rows
+into `errors[]`. The dashboard is the only layer in the project consuming an untyped payload. Deferred: it
+touches all four wrappers and every panel. **Trap flagged:** `TypedDict` would *look* like the fix and provide
+zero runtime validation; a `@dataclass` gives it free.
+**Proof the tests are load-bearing:** 13 tests, mutation-verified **4/4** — inverting the sentinel filter,
+dropping the zero-total guard, `is None` → `not`, and restoring `.get()` each turned at least one test red. The
+last of those produced `DID NOT RAISE`, which is the shape of the bug in one line.
+
+### The Streamlit cache lives in `app.py`, not `api_client.py`
+Counter-intuitive at first: caching HTTP responses *is* conventionally a transport concern (`Cache-Control`,
+`ETag`, `requests-cache`). But **`st.cache_data` is not an HTTP cache** — it is memoisation tied to Streamlit's
+script re-run lifecycle, keyed on Python argument values, knowing nothing about headers, and meaningless without
+the framework. The test that settles it: *what created the need?* Streamlit re-executes `app.py` from line 1 on
+every widget interaction. `curl`, a React SPA, or another Python importer has no such amplification. **The
+amplification is a UI-framework artifact, so the fix belongs with the framework that causes it** — exactly why
+`api/cache.py` (protecting BigQuery from repeated identical queries regardless of caller) is correctly placed at
+the data layer. **The boundary is enforced mechanically, not by discipline:** streamlit exists only in
+`.venv-dashboard`, so an `import streamlit` in `api_client.py` takes the 93-test host suite down with
+`ModuleNotFoundError` before an assertion runs. The Day-16 s1 venv split was made for *dependency-conflict*
+reasons; the architectural enforcement fell out of it. General heuristic banked: **import direction reveals
+design — an import can destroy a boundary without reversing an arrow.** **When the instinct wins:** a hand-rolled
+TTL or `requests-cache` keyed on `(path, params)` in the client would also stop the re-runs, stay framework-free,
+and remain testable against the fake transport — at the price of a dependency, no first-class `clear()`, and no
+awareness of Streamlit's session semantics.
+
+### Four per-endpoint cached wrappers, not one generic one
+**Rejected: a single `_cached_fetch(endpoint, day, limit)` over a registry.** Two reasons, neither stylistic.
+(1) **The signatures aren't uniform** — `get_runs(limit)` has no `day`, so a generic wrapper needs `**kwargs`
+(reintroducing the argument-hashing problem it was meant to avoid) *plus* a special case anyway; a DRY
+abstraction that doesn't cover the set isn't DRY. (2) **Per-endpoint decorators are what make split TTLs
+possible.** A generic wrapper also needs a string key and a second table to look it up, where a typo is a runtime
+`KeyError`. **When the generic one wins:** ten-plus endpoints with uniform signatures and one TTL. **Trap
+avoided:** passing the endpoint function as an argument to a cached function forces Streamlit to hash it, and
+reaching for the `_`-prefix escape hatch removes endpoint identity from the key — three panels would then share
+one cache entry on `(day, limit)` and the leaderboard would render trending data. Decorating the wrappers means
+the situation never arises. Also: **cache things that return data, not things that do things** — caching
+`_build_ranked_panel` (returns `None`, all side effects) would render an empty page on the second run.
+
+### Two TTLs, two different drivers — and the staleness arithmetic is per-endpoint
+`RANKED_TTL = 300` on the three marts is a **cost control**: they are billed query jobs, and Streamlit's re-run
+model turns a UI fidget into a bill. `RUNS_TTL = 30` on `/runs` is a **responsiveness** control: it rides the free
+`list_rows` path, so there is no bill to prevent — and `_build_runs_panel` passes a hardcoded `limit=10`, so
+every re-run refetches a payload that *cannot* have changed as a result of the interaction. The TTL number is set
+against **the rate the underlying data changes** (hourly DAG runs), not against cost: 30 s is ~120× finer than
+the update cadence, so the staleness it introduces is invisible against the thing being observed. That reframe
+covers the marts too — their data also changes hourly, so freshness was never their binding constraint either.
+**Correction to the day plan's single figure:** worst-case staleness is *per-endpoint*, not global. The marts
+stack Streamlit's 300 s on the API's 300 s for a **~600 s** worst case (the sum, not the max: the API's cache can
+be filled with a stale value 299 s before Streamlit fetches it, then Streamlit holds it another 300 s). `/runs`
+has **one** layer — Day 15 left it uncached server-side — so it tops out at **30 s**. The plan's "~10 minutes" is
+true for three endpoints of four.
+**This does not contradict Day 15 s5.** Uncached *server-side* and cached *client-side* are different decisions
+for the same reason the cache lives in `app.py`: the server cache would apply to every consumer and would be
+preventing a cost that doesn't exist; the Streamlit cache exists solely because Streamlit re-runs the script.
+
+### Refresh clears one layer — and the label says so
+`st.cache_data.clear()` empties the near cache only; the API happily re-serves its own cached rows behind it, so
+clicking Refresh inside the API's 300 s window returns the same numbers. Labelling the control **"Clear Cache
+Data" rather than "Refresh"** is therefore the honest choice: "Refresh" would promise freshness the button cannot
+deliver — the stacked-staleness problem surfacing in UI copy. Implemented as `on_click=st.cache_data.clear`
+rather than `if st.button(): ...`: Streamlit runs widget callbacks **before** the script body, so the clear
+cannot land after the panels have already read the cache, and the ordering stops depending on where the button
+sits in the file.
+**The honest fix, named not built:** a single invalidation key derived from the newest `run_id` in
+`pipeline_run_metadata`, threaded as an argument through both layers. `st.cache_data` keys on arguments, so a new
+`run_id` is automatically a new key and a miss; sending the same token to the API puts it in *its* key too. Both
+layers then invalidate at the instant the pipeline produced new data rather than when a timer fired — the cache
+stops being an approximation (same pattern as content-hashed asset filenames: never expire, change the key). TTL
+is wrong in **both** directions here because it is uncorrelated with the event it approximates: it refetches
+identical data ~12 times an hour between runs, *and* serves stale data for up to 600 s right when new data lands.
+**Not built because:** it spans three layers (API parameter + cache key, client argument, app token fetch) and
+changes a contract Day 15's tests pin; it cannot apply to `/runs` itself, since `run_id` is what `/runs` returns;
+and at hourly batch the approximation error is invisible. **Trigger to build it: when the update cadence
+approaches the TTL** — five-minute micro-batches or the Phase-4 streaming mart.
+
+### Finding — caches protect against re-runs at the same key, not against exploring the key space
+Visible directly in `bq ls -j` after a testing session: clusters of **three query jobs**, some only 9 seconds
+apart, each cluster a fresh page load. Both cache layers missed every time because `limit` and `date` were being
+changed — and **every distinct value is a new key at both layers**. A 100-position slider crossed with N dates is
+up to 100·N keys per endpoint, three query jobs each at the 10 MB minimum. Nothing built on Day 16 stops a user
+dragging that slider through twenty values and billing sixty jobs. **Mitigations named, not built:** coarser
+controls (a preset list instead of a free slider), a debounce, or over-fetching once at `limit=100` and slicing
+client-side — the last is why real dashboards over-fetch and paginate in the browser.
+
+### Finding — Streamlit does not memoise exceptions, and that has a cost
+Verified live: with uvicorn stopped after a warm load, the runs panel bannered at ~30 s while the three mart
+panels kept rendering; a **browser refresh** (cache intact, no `clear()`) recovered them the moment the API came
+back. So a raised `DashboardError` is never stored under the cache key. That is the right default — a failure is
+the absence of a result, and memoising it converts a two-second blip into a fixed-length outage whose recovery is
+on a timer rather than on the fix. **The cost:** every re-run retries while the dependency is down, and Streamlit
+re-runs on every interaction, so a user fidgeting during an outage hammers the dead endpoint. The `(1, 6)`
+timeouts bound each attempt; nothing bounds the *rate*. At scale that is the retry-storm shape, answered by
+exponential backoff with jitter or a circuit breaker. Worth noting what the app now does during an outage: the
+mart panels render stale numbers silently for five minutes while the runs panel tells the truth in thirty
+seconds and pays for it in retries — the same failure producing opposite behaviours in one page.
+
+### CORS reframed, and the backlog line closed (not implemented)
+Confirmed by construction and by observation: **no CORS middleware exists in `api/`, and the dashboard works.**
+If the browser were calling `:8000` from origin `:8501`, every request would be a cross-origin call to a server
+sending no `Access-Control-Allow-Origin`, and every panel would be empty. Streamlit renders **server-side** —
+`requests.get` runs inside the Streamlit server process and the browser only ever talks to `:8501` over the
+websocket, which DevTools confirms (zero requests to `:8000`). A server-side client sends no `Origin` header, so
+there is no CORS decision to make. **CORS is a browser policy enforced against JavaScript, not a server
+protection:** it authenticates nobody and stops no non-browser client — not `curl`, not `requests`, not
+Streamlit. Adding permissive CORS *reduces* a browser-side restriction rather than adding a server-side control.
+**The backlog item is therefore not "add CORS middleware"** — it is: *CORS becomes required the day a JavaScript
+frontend calls this API from another origin, and it is never a substitute for auth or rate limiting.*
+
+### Open question — the contributor leaderboard is topped by a bot
+Surfaced by the step-6 reconciliation: `contributor_leaderboard` rank 1 for 2024-01-01 is
+**`github-actions[bot]` with 19,082 contributions** — 11.6% of the day's total, from automation. The data is not
+wrong; the **semantics** are undecided. Filtering `[bot]`-suffixed accounts silently would be the presentation-
+layer lie again (the same class as filtering `Unknown`); leaving it unlabelled invites a viewer to read "top
+contributor" as "most active person." GitHub's `[bot]` suffix makes it filterable if that's the call. Related to
+the Day-11 finding that a bot-dominated firehose broke the hand-seed. **Not decided; not silently filtered.**
+
 ## Security & deployment hardening backlog (deferred from Day 3 / Phase 0)
 
 The thin slice is safe **as built**: localhost only, no untrusted input, no secrets in git, keyless
@@ -1093,8 +1277,13 @@ also flagged inline against the relevant phases in `CLAUDE.md`. Goal stated by m
   `maximum_bytes_billed=100_000_000` on every `QueryJobConfig`, pinned by a unit test. The old
   `/event-counts` path died in s2; `/runs` (s5) needs no cap — `list_rows` runs no query job.
   Remaining: any future ad-hoc query jobs.
-- **CORS (Phase 3).** When the dashboard calls the API, configure CORS deliberately — never
-  `allow_origins=["*"]` together with credentials.
+- **CORS (Phase 3).** ✅ **Reframed and closed Day 16 s3** — the dashboard shipped and CORS never fired,
+  because Streamlit renders server-side: `requests` runs in the Streamlit process, the browser only talks to
+  `:8501`, and a server-side client sends no `Origin`. CORS is a **browser** policy against JavaScript, not a
+  server protection — it authenticates nobody and stops no non-browser client. Restated: *CORS becomes required
+  the day a JS frontend calls this API from another origin, and it is never a substitute for auth or rate
+  limiting; permissive CORS **reduces** a browser restriction rather than adding a server control.* No
+  middleware added, deliberately.
 - **Dependency pinning (Phase 3 CI).** `requirements.txt` is unpinned (Terraform is pinned + locked
   via `.terraform.lock.hcl`). Pin Python deps via a lockfile (pip-tools/uv) and enable Dependabot to
   close the supply-chain gap.
