@@ -63,7 +63,7 @@ Execute in order; one small commit per step. Steps 0 and 6 are setup/verify, not
 - [x] `/verify-pipeline` holds untouched: silver **180,386**; marts **180,386 / 163,953 / 7,236** (= fact `WatchEvent` count); **PASS=69 WARN=0 ERROR=0**.
 - [x] `ruff` + `black` clean repo-wide; host pytest **93** green; `.venv-dashboard/` gitignored and untracked.
 - [x] `decisions.md` (11 entries incl. the CORS reframe closing that backlog line), `tradeoffs.md`, `glossary.md`, `skills-map.md` (Serving row → ✅), `history.md`, CLAUDE.md status updated → next up **Day 17: GitHub Actions CI**.
-- [ ] Teardown: `uvicorn` + `streamlit` stopped, containers down, `terraform destroy` clean (9 destroyed).
+- [x] Teardown: containers down (spark · dbt · airflow, none remaining), `terraform destroy` clean — **9 destroyed**. Stop `uvicorn` + `streamlit` in their terminals.
 
 > **Session 3 (2026-08-05) — day complete.** Steps 3–7 closed. Three commits: `98ce8f4` (schema guard + 13 transform tests, mutation-verified 4/4), `3399299` (five hidden/mislabelled states surfaced), `4aedfb1` (split-TTL caching + refresh). Beyond the plan: the missing-key-vs-NULL distinction and its `SchemaError` guard (Bryan's observation), a `RankedFetch` Protocol, and a corrected staleness figure — the arithmetic is per-endpoint, so the plan's flat "~10 minutes" holds for three endpoints of four. Two findings the plan didn't anticipate: caches bound re-runs at the same key but not exploration of the key space (three query jobs per new slider position, visible in `bq ls -j`), and Streamlit's non-caching of exceptions trades a fixed-length outage for unbounded retries. Open and undecided: `contributor_leaderboard` rank 1 is a bot.
 
