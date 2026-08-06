@@ -1,5 +1,6 @@
 import datetime
 from datetime import date
+from typing import Any, Protocol
 
 import streamlit as st
 
@@ -12,6 +13,11 @@ from dashboard.api_client import (
 )
 from dashboard.transforms import SchemaError, mask_nulls, split_unknown
 
+
+class RankedFetch(Protocol):
+    def __call__(self, *, day: date, limit: int) -> dict[str, Any]: ...
+
+
 st.set_page_config(
     page_title="DevPulse",
     initial_sidebar_state="expanded",
@@ -21,14 +27,42 @@ st.title("Welcome to DevPulse")
 
 st.sidebar.title("Date Selection")
 
+st.sidebar.button("Clear Cache Data", on_click=st.cache_data.clear)
 
 user_date_input = st.sidebar.date_input("Select a date: ", value=datetime.date(2024, 1, 1))
 
 user_limit_input = st.sidebar.slider("Limit: ", min_value=1, max_value=100, value=1)
 
+RANKED_TTL = 5 * 60
+
+# Remains uncached server side but given 30 second cache
+# run metadata gets updated every hour at the minimum
+# A 30 second cache sits well below the update rate
+RUNS_TTL = 30
+
+
+@st.cache_data(ttl=RANKED_TTL)
+def fetch_trending(day: date, limit: int) -> dict:
+    return get_trending(day=day, limit=limit)
+
+
+@st.cache_data(ttl=RANKED_TTL)
+def fetch_leaderboard(day: date, limit: int) -> dict:
+    return get_leaderboard(day=day, limit=limit)
+
+
+@st.cache_data(ttl=RANKED_TTL)
+def fetch_language_momentum(day: date, limit: int) -> dict:
+    return get_language_momentum(day=day, limit=limit)
+
+
+@st.cache_data(ttl=RUNS_TTL)
+def fetch_runs(limit: int) -> dict:
+    return get_runs(limit)
+
 
 def _build_ranked_panel(
-    fetch,
+    fetch: RankedFetch,
     day: date,
     limit: int,
     x: str,
@@ -88,7 +122,7 @@ def _build_runs_panel(limit: int = 10) -> None:
     st.header("Pipeline Status")
 
     try:
-        resp = get_runs(limit)
+        resp = fetch_runs(limit)
 
         result = resp["results"]
         errors = resp["errors"]
@@ -136,10 +170,10 @@ def _build_runs_panel(limit: int = 10) -> None:
 
 
 RANKED_PANELS = [
-    dict(fetch=get_trending, x="repo_name", y="stars", label="trending"),
-    dict(fetch=get_leaderboard, x="actor_login", y="contributions", label="leaderboard"),
+    dict(fetch=fetch_trending, x="repo_name", y="stars", label="trending"),
+    dict(fetch=fetch_leaderboard, x="actor_login", y="contributions", label="leaderboard"),
     dict(
-        fetch=get_language_momentum,
+        fetch=fetch_language_momentum,
         x="language",
         y="event_count",
         label="language momentum",
