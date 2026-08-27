@@ -1295,3 +1295,15 @@ also flagged inline against the relevant phases in `CLAUDE.md`. Goal stated by m
   drop them in staging.
 - **GitHub token for the live Events API (Phase 4).** The streaming producer needs a GitHub token;
   store it in the secrets backend, never in producer code or git.
+
+---
+
+## 2026-08-25 — Cut Phase 4 (Kafka streaming over GitHub events)
+
+Phase 4 is **cut from DevPulse**, decided at FleetLoop kickoff (Week 0). Streaming gets built
+in FleetLoop instead — Redpanda + Protobuf over vehicle telemetry — where it's on-target for
+the role that project aims at (Data Engineer, Fleet Data — Self-Driving). Building streaming
+twice adds tutorial hours, not interview value. DevPulse's story now ends at: Phase 3 complete
++ Day 17 (GitHub Actions CI) + close-out artifacts (README, architecture diagram, demo video).
+Consequence: the Phase-4 open items above (e.g. the GitHub token for the live Events API) are
+moot for this repo.
