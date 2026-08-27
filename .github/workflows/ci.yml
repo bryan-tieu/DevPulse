@@ -1,0 +1,36 @@
+name: CI Workflow
+
+on: 
+  push: 
+    branches: [ "main" ]
+  pull_request:
+    # We want to check every PR we come across not only targetted ones
+
+permissions: 
+  contents: read # least privilege permissions; this job only reads code. 
+
+concurrency:
+  group:
+    ${{ github.workflow }}-${{ github.ref }}
+  
+  cancel-in-progress: true 
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4 # tags are okay for first party actions/* but switch to SHA for third-party
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # YAML reads it as a float so we want quotes
+      
+      - name: Install tooling
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+      
+      - name: Check formatting
+        run: black --check --diff .
